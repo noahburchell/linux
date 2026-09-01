@@ -1034,7 +1034,6 @@ static int metadata_checkpoint(struct era_metadata *md)
 static int metadata_take_snap(struct era_metadata *md)
 {
 	int r, inc;
-	dm_block_t location;
 	struct dm_block *clone;
 
 	if (md->metadata_snap != SUPERBLOCK_LOCATION) {
@@ -1072,9 +1071,7 @@ static int metadata_take_snap(struct era_metadata *md)
 	r = dm_sm_inc_block(md->sm, md->writeset_tree_root);
 	if (r) {
 		DMERR("%s: couldn't inc writeset tree root", __func__);
-		location = dm_block_location(clone);
 		dm_tm_unlock(md->tm, clone);
-		dm_sm_dec_block(md->sm, location);
 		return r;
 	}
 
@@ -1082,9 +1079,7 @@ static int metadata_take_snap(struct era_metadata *md)
 	if (r) {
 		DMERR("%s: couldn't inc era tree root", __func__);
 		dm_sm_dec_block(md->sm, md->writeset_tree_root);
-		location = dm_block_location(clone);
 		dm_tm_unlock(md->tm, clone);
-		dm_sm_dec_block(md->sm, location);
 		return r;
 	}
 
@@ -1494,7 +1489,7 @@ static int era_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (r) {
 		ti->error = "Error opening metadata device";
 		era_destroy(era);
-		return r;
+		return -EINVAL;
 	}
 
 	r = dm_get_device(ti, argv[1], BLK_OPEN_READ | BLK_OPEN_WRITE,
@@ -1502,7 +1497,7 @@ static int era_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (r) {
 		ti->error = "Error opening data device";
 		era_destroy(era);
-		return r;
+		return -EINVAL;
 	}
 
 	r = sscanf(argv[2], "%u%c", &era->sectors_per_block, &dummy);
@@ -1516,7 +1511,7 @@ static int era_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (r) {
 		ti->error = "could not set max io len";
 		era_destroy(era);
-		return r;
+		return -EINVAL;
 	}
 
 	if (!valid_block_size(era->sectors_per_block)) {

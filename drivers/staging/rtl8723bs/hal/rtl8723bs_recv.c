@@ -110,6 +110,7 @@ static void update_recvframe_phyinfo(union recv_frame *precvframe,
 	pkt_info.to_self = pkt_info.bssid_match &&
 		ether_addr_equal(rx_ra, my_hwaddr);
 
+
 	pkt_info.is_beacon = pkt_info.bssid_match &&
 		(GetFrameSubType(wlanhdr) == WIFI_BEACON);
 
@@ -134,7 +135,7 @@ static void update_recvframe_phyinfo(union recv_frame *precvframe,
 	precvframe->u.hdr.psta = NULL;
 	if (
 		pkt_info.bssid_match &&
-		(check_fwstate(&padapter->mlmepriv, WIFI_AP_STATE))
+		(check_fwstate(&padapter->mlmepriv, WIFI_AP_STATE) == true)
 	) {
 		if (psta) {
 			precvframe->u.hdr.psta = psta;
@@ -267,9 +268,9 @@ static void rtl8723bs_recv_tasklet(struct tasklet_struct *t)
 				rtw_free_recvframe(precvframe,
 						   &precvpriv->free_recv_queue);
 			} else {
-				/*	Modified by Albert 20101213 */
-				/*	For 8 bytes IP header alignment. */
-				if (pattrib->qos)	/*	Qos data, wireless lan header length is 26 */
+				/* 	Modified by Albert 20101213 */
+				/* 	For 8 bytes IP header alignment. */
+				if (pattrib->qos)	/* 	Qos data, wireless lan header length is 26 */
 					shift_sz = 6;
 				else
 					shift_sz = 0;
@@ -285,8 +286,8 @@ static void rtl8723bs_recv_tasklet(struct tasklet_struct *t)
 						alloc_sz = skb_len + 14;
 				} else {
 					alloc_sz = skb_len;
-					/*	6 is for IP header 8 bytes alignment in QoS packet case. */
-					/*	8 is for skb->data 4 bytes alignment. */
+					/* 	6 is for IP header 8 bytes alignment in QoS packet case. */
+					/* 	8 is for skb->data 4 bytes alignment. */
 					alloc_sz += 14;
 				}
 

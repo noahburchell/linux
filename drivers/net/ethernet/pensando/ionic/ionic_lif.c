@@ -140,7 +140,6 @@ void ionic_lif_deferred_enqueue(struct ionic_lif *lif,
 
 static void ionic_link_status_check(struct ionic_lif *lif)
 {
-	struct ionic_dev *idev = &lif->ionic->idev;
 	struct net_device *netdev = lif->netdev;
 	u16 link_status;
 	bool link_up;
@@ -153,8 +152,6 @@ static void ionic_link_status_check(struct ionic_lif *lif)
 		clear_bit(IONIC_LIF_F_LINK_CHECK_REQUESTED, lif->state);
 		return;
 	}
-
-	ionic_reset_link_down_count(idev);
 
 	link_status = le16_to_cpu(lif->info->status.link_status);
 	link_up = link_status == IONIC_PORT_OPER_STATUS_UP;
@@ -182,6 +179,7 @@ static void ionic_link_status_check(struct ionic_lif *lif)
 		}
 	} else {
 		if (netif_carrier_ok(netdev)) {
+			lif->link_down_count++;
 			netdev_info(netdev, "Link down\n");
 			netif_carrier_off(netdev);
 		}
@@ -920,21 +918,8 @@ static int ionic_lif_rxq_init(struct ionic_lif *lif, struct ionic_qcq *qcq)
 	};
 	int err;
 
-	q->partner = NULL;
-
-	/* Only normal RX queues have matching TX queue partners. */
-	if (q->index < lif->nxqs) {
-		if (!lif->txqcqs ||
-		    q->index >= lif->ionic->ntxqs_per_lif ||
-		    !lif->txqcqs[q->index]) {
-			dev_err(dev, "missing TX queue partner for RX queue %u\n",
-				q->index);
-			return -ENXIO;
-		}
-
-		q->partner = &lif->txqcqs[q->index]->q;
-		q->partner->partner = q;
-	}
+	q->partner = &lif->txqcqs[q->index]->q;
+	q->partner->partner = q;
 
 	if (!lif->xdp_prog ||
 	    (lif->xdp_prog->aux && lif->xdp_prog->aux->xdp_has_frags))
@@ -1513,8 +1498,7 @@ static int ionic_set_nic_features(struct ionic_lif *lif,
 	ctx.cmd.lif_setattr.features = ionic_netdev_features_to_nic(features);
 
 	if (lif->phc)
-		ctx.cmd.lif_setattr.features |= lif->ionic->ident.lif.eth.config.features &
-			cpu_to_le64(IONIC_ETH_HW_TIMESTAMP | IONIC_ETH_HW_RDMA_TIMESTAMP);
+		ctx.cmd.lif_setattr.features |= cpu_to_le64(IONIC_ETH_HW_TIMESTAMP);
 
 	err = ionic_adminq_post_wait(lif, &ctx);
 	if (err)
@@ -1565,8 +1549,6 @@ static int ionic_set_nic_features(struct ionic_lif *lif,
 		dev_dbg(dev, "feature ETH_HW_TSO_UDP_CSUM\n");
 	if (lif->hw_features & IONIC_ETH_HW_TIMESTAMP)
 		dev_dbg(dev, "feature ETH_HW_TIMESTAMP\n");
-	if (lif->hw_features & IONIC_ETH_HW_RDMA_TIMESTAMP)
-		dev_dbg(dev, "feature ETH_HW_RDMA_TIMESTAMP\n");
 
 	return 0;
 }

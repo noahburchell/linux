@@ -565,6 +565,8 @@ __cold bool io_uring_try_cancel_requests(struct io_ring_ctx *ctx,
 	mutex_unlock(&ctx->uring_lock);
 	if (tctx)
 		ret |= io_run_task_work() > 0;
+	else
+		ret |= flush_delayed_work(&ctx->fallback_work);
 	return ret;
 }
 
@@ -660,6 +662,6 @@ end_wait:
 		 */
 		atomic_dec(&tctx->in_cancel);
 		/* for exec all current's requests should be gone, kill tctx */
-		io_uring_free_tctx(current);
+		__io_uring_free(current);
 	}
 }

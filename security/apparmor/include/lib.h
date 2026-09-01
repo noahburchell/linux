@@ -136,7 +136,7 @@ static inline bool aa_strneq(const char *str, const char *sub, int len)
  * character which is not used in standard matching and is only
  * used to separate pairs.
  */
-static inline aa_state_t aa_dfa_null_transition(const struct aa_dfa *dfa,
+static inline aa_state_t aa_dfa_null_transition(struct aa_dfa *dfa,
 						aa_state_t start)
 {
 	/* the null transition only needs the string's null terminator byte */
@@ -281,15 +281,15 @@ void aa_policy_destroy(struct aa_policy *policy);
  * @FN: fn to call for each profile transition. @P is set to the profile
  *
  * Returns: new label on success
- *	    NULL if all callbacks decline to specify a transition
  *          ERR_PTR if build @FN fails
+ *          NULL if label_build fails due to low memory conditions
  *
- * @FN must return a label or ERR_PTR on failure.
+ * @FN must return a label or ERR_PTR on failure. NULL is not allowed
  */
 #define fn_label_build(L, P, GFP, FN)					\
 ({									\
 	__label__ __do_cleanup, __done;					\
-	struct aa_label *__new_ = NULL;					\
+	struct aa_label *__new_;					\
 									\
 	if ((L)->size > 1) {						\
 		/* TODO: add cache of transitions already done */	\
@@ -298,21 +298,17 @@ void aa_policy_destroy(struct aa_policy *policy);
 		DEFINE_VEC(label, __lvec);				\
 		DEFINE_VEC(profile, __pvec);				\
 		if (vec_setup(label, __lvec, (L)->size, (GFP)))	{	\
-			__new_ = ERR_PTR(-ENOMEM);			\
+			__new_ = NULL;					\
 			goto __done;					\
 		}							\
 		__j = 0;						\
 		label_for_each(__i, (L), (P)) {				\
 			__new_ = (FN);					\
-			if (!__new_)					\
-				continue;				\
+			AA_BUG(!__new_);				\
 			if (IS_ERR(__new_))				\
 				goto __do_cleanup;			\
 			__lvec[__j++] = __new_;				\
 		}							\
-		if (__j == 0)						\
-			/* no components adding to build */		\
-			goto __do_cleanup;				\
 		for (__j = __count = 0; __j < (L)->size; __j++)		\
 			__count += __lvec[__j]->size;			\
 		if (!vec_setup(profile, __pvec, __count, (GFP))) {	\
@@ -324,13 +320,14 @@ void aa_policy_destroy(struct aa_policy *policy);
 			if (__count > 1) {				\
 				__new_ = aa_vec_find_or_create_label(__pvec,\
 						     __count, (GFP));	\
+				/* only fails if out of Mem */		\
 				if (!__new_)				\
-					__new_ = ERR_PTR(-ENOMEM);	\
+					__new_ = NULL;			\
 			} else						\
 				__new_ = aa_get_label(&__pvec[0]->label); \
 			vec_cleanup(profile, __pvec, __count);		\
 		} else							\
-			__new_ = ERR_PTR(-ENOMEM);			\
+			__new_ = NULL;					\
 __do_cleanup:								\
 		vec_cleanup(label, __lvec, (L)->size);			\
 	} else {							\
@@ -338,8 +335,8 @@ __do_cleanup:								\
 		__new_ = (FN);						\
 	}								\
 __done:									\
-	if (IS_ERR(__new_))						\
-		AA_DEBUG(DEBUG_LABEL, "label build failed %ld\n", PTR_ERR(__new_)); \
+	if (!__new_)							\
+		AA_DEBUG(DEBUG_LABEL, "label build failed\n");		\
 	(__new_);							\
 })
 

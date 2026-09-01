@@ -390,7 +390,7 @@ int iommu_mock_device_add(struct device *dev, struct iommu_device *iommu)
 
 	rc = device_add(dev);
 	if (rc)
-		dev_iommu_free(dev);
+		iommu_fwspec_free(dev);
 	return rc;
 }
 EXPORT_SYMBOL_GPL(iommu_mock_device_add);
@@ -611,8 +611,9 @@ static void iommu_deinit_device(struct device *dev)
 	dev->iommu_group = NULL;
 	module_put(ops->owner);
 	dev_iommu_free(dev);
-	if (IS_ENABLED(CONFIG_IOMMU_DMA))
-		dev_clear_dma_iommu(dev);
+#ifdef CONFIG_IOMMU_DMA
+	dev->dma_iommu = false;
+#endif
 }
 
 static struct iommu_domain *pasid_array_entry_to_domain(void *entry)
@@ -1345,11 +1346,11 @@ int iommu_group_add_device(struct iommu_group *group, struct device *dev)
 EXPORT_SYMBOL_GPL(iommu_group_add_device);
 
 /**
- * iommu_group_remove_device - remove a device from its current group
+ * iommu_group_remove_device - remove a device from it's current group
  * @dev: device to be removed
  *
  * This function is called by an iommu driver to remove the device from
- * its current group.  This decrements the iommu group reference count.
+ * it's current group.  This decrements the iommu group reference count.
  */
 void iommu_group_remove_device(struct device *dev)
 {

@@ -82,7 +82,7 @@ mode_store(struct device *dev, struct device_attribute *attr,
 }
 
 #define thermal_trip_of_attr(_ptr_, _attr_)				\
-	({								\
+	({ 								\
 		struct thermal_trip_desc *td;				\
 									\
 		td = container_of(_ptr_, struct thermal_trip_desc,	\
@@ -536,9 +536,11 @@ cur_state_store(struct device *dev, struct device_attribute *attr,
 	unsigned long state;
 	int result;
 
-	result = kstrtoul(buf, 10, &state);
-	if (result < 0)
-		return result;
+	if (sscanf(buf, "%ld\n", &state) != 1)
+		return -EINVAL;
+
+	if ((long)state < 0)
+		return -EINVAL;
 
 	/* Requested state should be less than max_state + 1 */
 	if (state > cdev->max_state)
@@ -706,7 +708,7 @@ static ssize_t trans_table_show(struct device *dev,
 	struct thermal_cooling_device *cdev = to_cooling_device(dev);
 	struct cooling_dev_stats *stats;
 	ssize_t len = 0;
-	int i, j, copied;
+	int i, j;
 
 	guard(cooling_dev)(cdev);
 
@@ -714,40 +716,41 @@ static ssize_t trans_table_show(struct device *dev,
 	if (!stats)
 		return -ENODATA;
 
-	len += sysfs_emit_at(buf, len, " From  :    To\n");
-	len += sysfs_emit_at(buf, len, "       : ");
+	len += snprintf(buf + len, PAGE_SIZE - len, " From  :    To\n");
+	len += snprintf(buf + len, PAGE_SIZE - len, "       : ");
 	for (i = 0; i <= cdev->max_state; i++) {
-		copied = sysfs_emit_at(buf, len, "state%2u  ", i);
-		if (!copied)
-			goto buf_full;
-		len += copied;
+		if (len >= PAGE_SIZE)
+			break;
+		len += snprintf(buf + len, PAGE_SIZE - len, "state%2u  ", i);
 	}
-	len += sysfs_emit_at(buf, len, "\n");
+	if (len >= PAGE_SIZE)
+		return PAGE_SIZE;
+
+	len += snprintf(buf + len, PAGE_SIZE - len, "\n");
 
 	for (i = 0; i <= cdev->max_state; i++) {
-		copied = sysfs_emit_at(buf, len, "state%2u:", i);
-		if (!copied)
-			goto buf_full;
-		len += copied;
+		if (len >= PAGE_SIZE)
+			break;
+
+		len += snprintf(buf + len, PAGE_SIZE - len, "state%2u:", i);
 
 		for (j = 0; j <= cdev->max_state; j++) {
-			copied = sysfs_emit_at(buf, len, "%8u ",
+			if (len >= PAGE_SIZE)
+				break;
+			len += snprintf(buf + len, PAGE_SIZE - len, "%8u ",
 				stats->trans_table[i * (cdev->max_state + 1) + j]);
-			if (!copied)
-				goto buf_full;
-			len += copied;
 		}
-		copied = sysfs_emit_at(buf, len, "\n");
-		if (!copied)
-			goto buf_full;
-		len += copied;
+		if (len >= PAGE_SIZE)
+			break;
+		len += snprintf(buf + len, PAGE_SIZE - len, "\n");
+	}
+
+	if (len >= PAGE_SIZE) {
+		pr_warn_once("Thermal transition table exceeds PAGE_SIZE. Disabling\n");
+		len = -EFBIG;
 	}
 
 	return len;
-
-buf_full:
-	pr_warn_once("Thermal transition table exceeds PAGE_SIZE. Disabling\n");
-	return -EFBIG;
 }
 
 static DEVICE_ATTR_RO(total_trans);

@@ -27,7 +27,6 @@
 #include "xe_sriov_vf_ccs_types.h"
 #include "xe_step_types.h"
 #include "xe_survivability_mode_types.h"
-#include "xe_sysctrl_types.h"
 #include "xe_tile_types.h"
 #include "xe_validation.h"
 
@@ -42,7 +41,6 @@ struct xe_ggtt;
 struct xe_i2c;
 struct xe_pat_ops;
 struct xe_pxp;
-struct xe_ttm_stolen_mgr;
 struct xe_vram_region;
 
 /**
@@ -60,23 +58,6 @@ enum xe_wedged_mode {
 	XE_WEDGED_MODE_UPON_CRITICAL_ERROR = 1,
 	XE_WEDGED_MODE_UPON_ANY_HANG_NO_RESET = 2,
 };
-
-#ifdef CONFIG_DRM_XE_DEBUG_PAGE_SIZE
-/**
- * enum xe_page_size_alloc_ctrl_mode - User BO page-size allocation control modes
- * @XE_PAGE_SIZE_ALLOC_CTRL_MODE_NONE: Use the normal allocation policy
- * @XE_PAGE_SIZE_ALLOC_CTRL_MODE_ONLY_2M: Force user BO allocations to 2M pages
- * @XE_PAGE_SIZE_ALLOC_CTRL_MODE_ONLY_1G: Force user BO allocations to 1G pages
- * @XE_PAGE_SIZE_ALLOC_CTRL_MODE_MIXED: Select page sizes in round-robin order
- *     (4K, 64K, 2M, 1G)
- */
-enum xe_page_size_alloc_ctrl_mode {
-	XE_PAGE_SIZE_ALLOC_CTRL_MODE_NONE = 0,
-	XE_PAGE_SIZE_ALLOC_CTRL_MODE_ONLY_2M,
-	XE_PAGE_SIZE_ALLOC_CTRL_MODE_ONLY_1G,
-	XE_PAGE_SIZE_ALLOC_CTRL_MODE_MIXED
-};
-#endif
 
 #define XE_BO_INVALID_OFFSET	LONG_MAX
 
@@ -161,6 +142,8 @@ struct xe_device {
 		 * Keep all flags below alphabetically sorted
 		 */
 
+		/** @info.force_execlist: Forced execlist submission */
+		u8 force_execlist:1;
 		/** @info.has_access_counter: Device supports access counter */
 		u8 has_access_counter:1;
 		/** @info.has_asid: Has address space ID */
@@ -171,8 +154,6 @@ struct xe_device {
 		u8 has_cached_pt:1;
 		/** @info.has_device_atomics_on_smem: Supports device atomics on SMEM */
 		u8 has_device_atomics_on_smem:1;
-		/** @info.has_drm_ras: Device supports drm_ras (Reliability, Availability, Serviceability) */
-		u8 has_drm_ras:1;
 		/** @info.has_fan_control: Device supports fan control */
 		u8 has_fan_control:1;
 		/** @info.has_flat_ccs: Whether flat CCS metadata is used */
@@ -215,8 +196,6 @@ struct xe_device {
 		u8 has_soc_remapper_telem:1;
 		/** @info.has_sriov: Supports SR-IOV */
 		u8 has_sriov:1;
-		/** @info.has_sysctrl: Supports System Controller */
-		u8 has_sysctrl:1;
 		/** @info.has_usm: Device has unified shared memory support */
 		u8 has_usm:1;
 		/** @info.has_64bit_timestamp: Device supports 64-bit timestamps */
@@ -236,6 +215,8 @@ struct xe_device {
 		u8 probe_display:1;
 		/** @info.skip_guc_pc: Skip GuC based PM feature init */
 		u8 skip_guc_pc:1;
+		/** @info.skip_mtcfg: skip Multi-Tile configuration from MTCFG register */
+		u8 skip_mtcfg:1;
 		/** @info.skip_pcode: skip access to PCODE uC */
 		u8 skip_pcode:1;
 		/** @info.needs_shared_vf_gt_wq: needs shared GT WQ on VF */
@@ -292,10 +273,8 @@ struct xe_device {
 		struct xe_vram_region *vram;
 		/** @mem.sys_mgr: system TTM manager */
 		struct ttm_resource_manager sys_mgr;
-		/** @mem.shrinker: system memory shrinker. */
+		/** @mem.sys_mgr: system memory shrinker. */
 		struct xe_shrinker *shrinker;
-		/** @mem.stolen_mgr: stolen memory manager. */
-		struct xe_ttm_stolen_mgr *stolen_mgr;
 	} mem;
 
 	/** @sriov: device level virtualization data */
@@ -316,7 +295,7 @@ struct xe_device {
 
 	/** @usm: unified memory state */
 	struct {
-		/** @usm.asid_to_vm: convert an ASID to VM */
+		/** @usm.asid: convert a ASID to VM */
 		struct xarray asid_to_vm;
 		/** @usm.next_asid: next ASID, used to cyclical alloc asids */
 		u32 next_asid;
@@ -333,7 +312,7 @@ struct xe_device {
 		/** @usm.pf_queue: Page fault queues */
 		struct xe_pagefault_queue pf_queue[XE_PAGEFAULT_QUEUE_COUNT];
 #if IS_ENABLED(CONFIG_DRM_XE_PAGEMAP)
-		/** @usm.dpagemap_shrinker: Shrinker for unused pagemaps */
+		/** @usm.pagemap_shrinker: Shrinker for unused pagemaps */
 		struct drm_pagemap_shrinker *dpagemap_shrinker;
 #endif
 	} usm;
@@ -355,7 +334,7 @@ struct xe_device {
 			struct list_head kernel_bo_present;
 			/** @pinned.late.evicted: pinned BO that have been evicted */
 			struct list_head evicted;
-			/** @pinned.late.external: pinned external and dma-buf. */
+			/** @pinned.external: pinned external and dma-buf. */
 			struct list_head external;
 		} late;
 	} pinned;
@@ -390,7 +369,7 @@ struct xe_device {
 		struct {
 			/**
 			 * @mem_access.vram_userfault.lock: Protects access to
-			 * @mem_access.vram_userfault.list Using mutex instead of spinlock
+			 * @vram_usefault.list Using mutex instead of spinlock
 			 * as lock is applied to entire list operation which
 			 * may sleep
 			 */
@@ -421,11 +400,7 @@ struct xe_device {
 		const struct xe_pat_table_entry *pat_primary_pta;
 		/** @pat.pat_media_pta: media GT PAT entry for page table accesses */
 		const struct xe_pat_table_entry *pat_media_pta;
-		/** @pat.pat_primary_tr_pta: primary GT PAT entry for TRTT page table accesses */
-		const struct xe_pat_table_entry *pat_primary_tr_pta;
-		/** @pat.pat_media_tr_pta: media GT PAT entry for TRTT page table accesses */
-		const struct xe_pat_table_entry *pat_media_tr_pta;
-		u16 idx[__XE_CACHE_LEVEL_COUNT];
+		u32 idx[__XE_CACHE_LEVEL_COUNT];
 	} pat;
 
 	/** @d3cold: Encapsulate d3cold related stuff */
@@ -495,20 +470,6 @@ struct xe_device {
 	/** @late_bind: xe mei late bind interface */
 	struct xe_late_bind late_bind;
 
-#ifdef CONFIG_DRM_XE_DEBUG_PAGE_SIZE
-	/**
-	 * @page_size_alloc_ctrl: User BO page-size allocation
-	 * debug control state
-	 */
-	struct {
-		/** @page_size_alloc_ctrl.mode: xe page size allocation control mode */
-		enum xe_page_size_alloc_ctrl_mode mode;
-		/** @page_size_alloc_ctrl.cur_index: Round-robin index used by mixed mode */
-		u32 cur_index;
-		/** @page_size_alloc_ctrl.lock: Protects @mode and @cur_index */
-		struct mutex lock;
-	} page_size_alloc_ctrl;
-#endif
 	/** @oa: oa observation subsystem */
 	struct xe_oa oa;
 
@@ -517,9 +478,6 @@ struct xe_device {
 
 	/** @needs_flr_on_fini: requests function-reset on fini */
 	bool needs_flr_on_fini;
-
-	/** @in_reset: Indicates if device is in reset */
-	atomic_t in_reset;
 
 	/** @wedged: Struct to control Wedged States and mode */
 	struct {
@@ -532,9 +490,6 @@ struct xe_device {
 		/** @wedged.inconsistent_reset: Inconsistent reset policy state between GTs */
 		bool inconsistent_reset;
 	} wedged;
-
-	/** @devres_group: devres group */
-	void *devres_group;
 
 	/** @bo_device: Struct to control async free of BOs */
 	struct xe_bo_dev {
@@ -552,9 +507,6 @@ struct xe_device {
 
 	/** @i2c: I2C host controller */
 	struct xe_i2c *i2c;
-
-	/** @sc: System Controller */
-	struct xe_sysctrl sc;
 
 	/** @atomic_svm_timeslice_ms: Atomic SVM fault timeslice MS */
 	u32 atomic_svm_timeslice_ms;
@@ -626,7 +578,7 @@ struct xe_file {
 
 	/** @vm: VM state for file */
 	struct {
-		/** @vm.xa: xarray to store VMs */
+		/** @vm.xe: xarray to store VMs */
 		struct xarray xa;
 		/**
 		 * @vm.lock: Protects VM lookup + reference and removal from

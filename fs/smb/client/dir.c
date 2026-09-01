@@ -115,7 +115,11 @@ char *__build_path_from_dentry_optional_prefix(struct dentry *direntry, void *pa
 	}
 	if (dirsep != '/') {
 		/* BB test paths to Windows with '/' in the midst of prepath */
-		strreplace(s, '/', dirsep);
+		char *p;
+
+		for (p = s; *p; p++)
+			if (*p == '/')
+				*p = dirsep;
 	}
 	if (dfsplen) {
 		s -= dfsplen;
@@ -235,12 +239,6 @@ static int __cifs_do_create(struct inode *dir, struct dentry *direntry,
 			if (newinode == NULL) {
 				/* query inode info */
 				goto cifs_create_get_file_info;
-			}
-
-			if ((oflags & __O_REGULAR) && !S_ISREG(newinode->i_mode)) {
-				CIFSSMBClose(xid, tcon, fid->netfid);
-				iput(newinode);
-				return -EFTYPE;
 			}
 
 			if (S_ISDIR(newinode->i_mode)) {
@@ -460,15 +458,9 @@ cifs_create_set_dentry:
 		goto out_err;
 	}
 
-	if (newinode) {
-		if ((oflags & __O_REGULAR) && !S_ISREG(newinode->i_mode)) {
-			rc = -EFTYPE;
-			goto out_err;
-		}
-		if (S_ISDIR(newinode->i_mode)) {
-			rc = -EISDIR;
-			goto out_err;
-		}
+	if (newinode && S_ISDIR(newinode->i_mode)) {
+		rc = -EISDIR;
+		goto out_err;
 	}
 
 	*inode = newinode;
@@ -641,7 +633,7 @@ out_free_xid:
  * hashed-positive by calling d_instantiate().
  */
 int cifs_create(struct mnt_idmap *idmap, struct inode *dir,
-		struct dentry *direntry, umode_t mode)
+		struct dentry *direntry, umode_t mode, bool excl)
 {
 	struct cifs_sb_info *cifs_sb = CIFS_SB(dir);
 	int rc;
@@ -1134,8 +1126,6 @@ int cifs_tmpfile(struct mnt_idmap *idmap, struct inode *dir,
 	} while (unlikely(rc == -EEXIST) && ++retries < max_retries);
 
 	if (rc) {
-		if (rc == -ENOENT)
-			rc = -EOPNOTSUPP;
 		cifs_del_pending_open(&open);
 		goto out;
 	}

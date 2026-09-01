@@ -15,7 +15,6 @@
 #include <linux/module.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
-#include <linux/string.h>
 #include <linux/sysfs.h>
 #include <linux/workqueue.h>
 #include "atmel-i2c.h"
@@ -32,14 +31,10 @@ static void atmel_sha204a_rng_done(struct atmel_i2c_work_data *work_data,
 	struct atmel_i2c_client_priv *i2c_priv = work_data->ctx;
 	struct hwrng *rng = areq;
 
-	if (status) {
+	if (status)
 		dev_warn_ratelimited(&i2c_priv->client->dev,
 				     "i2c transaction failed (%d)\n",
 				     status);
-		kfree_sensitive(work_data);
-		atomic_dec(&i2c_priv->tfm_count);
-		return;
-	}
 
 	rng->priv = (unsigned long)work_data;
 	atomic_dec(&i2c_priv->tfm_count);
@@ -96,15 +91,12 @@ static int atmel_sha204a_rng_read(struct hwrng *rng, void *data, size_t max,
 
 	ret = atmel_i2c_send_receive(i2c_priv->client, &cmd);
 	if (ret)
-		goto out;
+		return ret;
 
 	max = min(RANDOM_RSP_SIZE - CMD_OVERHEAD_SIZE, max);
 	memcpy(data, &cmd.data[RSP_DATA_IDX], max);
-	ret = max;
 
-out:
-	memzero_explicit(&cmd, sizeof(cmd));
-	return ret;
+	return max;
 }
 
 static int atmel_sha204a_otp_read(struct i2c_client *client, u16 addr, u8 *otp)
@@ -209,24 +201,25 @@ static void atmel_sha204a_remove(struct i2c_client *client)
 {
 	struct atmel_i2c_client_priv *i2c_priv = i2c_get_clientdata(client);
 
-	sysfs_remove_group(&client->dev.kobj, &atmel_sha204a_groups);
 	devm_hwrng_unregister(&client->dev, &i2c_priv->hwrng);
 	atmel_i2c_flush_queue();
 
-	kfree_sensitive((void *)i2c_priv->hwrng.priv);
+	sysfs_remove_group(&client->dev.kobj, &atmel_sha204a_groups);
+
+	kfree((void *)i2c_priv->hwrng.priv);
 }
 
-static const struct of_device_id atmel_sha204a_dt_ids[] = {
-	{ .compatible = "atmel,atsha204" },
-	{ .compatible = "atmel,atsha204a" },
-	{ }
+static const struct of_device_id atmel_sha204a_dt_ids[] __maybe_unused = {
+	{ .compatible = "atmel,atsha204", .data = &atsha204_quality },
+	{ .compatible = "atmel,atsha204a", },
+	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(of, atmel_sha204a_dt_ids);
 
 static const struct i2c_device_id atmel_sha204a_id[] = {
-	{ .name = "atsha204", .driver_data = (kernel_ulong_t)&atsha204_quality },
-	{ .name = "atsha204a", .driver_data = (kernel_ulong_t)NULL },
-	{ }
+	{ "atsha204", (kernel_ulong_t)&atsha204_quality },
+	{ "atsha204a" },
+	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, atmel_sha204a_id);
 
@@ -236,7 +229,7 @@ static struct i2c_driver atmel_sha204a_driver = {
 	.id_table		= atmel_sha204a_id,
 
 	.driver.name		= "atmel-sha204a",
-	.driver.of_match_table	= atmel_sha204a_dt_ids,
+	.driver.of_match_table	= of_match_ptr(atmel_sha204a_dt_ids),
 };
 
 static int __init atmel_sha204a_init(void)

@@ -3,7 +3,6 @@
 
 #include <linux/bug.h>
 #include <linux/err.h>
-#include <linux/overflow.h>
 #include <linux/random.h>
 #include <linux/slab.h>
 #include <linux/types.h>
@@ -16,7 +15,7 @@
 #include "super.h"
 
 #define CEPH_MDS_IS_READY(i, ignore_laggy) \
-	(m->m_info[i].state > 0 && (ignore_laggy ? true : !m->m_info[i].laggy))
+	(m->m_info[i].state > 0 && ignore_laggy ? true : !m->m_info[i].laggy)
 
 static int __mdsmap_get_random_mds(struct ceph_mdsmap *m, bool ignore_laggy)
 {
@@ -127,7 +126,6 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 	u8 mdsmap_v;
 	u16 mdsmap_ev;
 	u32 target;
-	size_t export_targets_len;
 
 	m = kzalloc_obj(*m, GFP_NOFS);
 	if (!m)
@@ -226,11 +224,8 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 		*p += namelen;
 		if (info_v >= 2) {
 			ceph_decode_32_safe(p, end, num_export_targets, bad);
-			export_targets_len = size_mul(num_export_targets,
-						      sizeof(u32));
-			ceph_decode_need(p, end, export_targets_len, bad);
 			pexport_targets = *p;
-			*p += export_targets_len;
+			*p += num_export_targets * sizeof(u32);
 		} else {
 			num_export_targets = 0;
 		}
@@ -269,10 +264,6 @@ struct ceph_mdsmap *ceph_mdsmap_decode(struct ceph_mds_client *mdsc, void **p,
 				goto nomem;
 			for (j = 0; j < num_export_targets; j++) {
 				target = ceph_decode_32(&pexport_targets);
-				if (target >= CEPH_MAX_MDS) {
-					err = -EIO;
-					goto corrupt;
-				}
 				info->export_targets[j] = target;
 			}
 		} else {

@@ -1,4 +1,3 @@
-// SPDX-License-Identifier: GPL-2.0
 /*
    BlueZ - Bluetooth protocol stack for Linux
    Copyright (C) 2000-2001 Qualcomm Incorporated
@@ -8,6 +7,10 @@
    Copyright (c) 2012 Code Aurora Forum.  All rights reserved.
 
    Written 2000,2001 by Maxim Krasnyansky <maxk@qualcomm.com>
+
+   This program is free software; you can redistribute it and/or modify
+   it under the terms of the GNU General Public License version 2 as
+   published by the Free Software Foundation;
 
    THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
    OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
@@ -1791,7 +1794,6 @@ static void l2cap_unregister_all_users(struct l2cap_conn *conn)
 }
 
 static void l2cap_conn_del(struct hci_conn *hcon, int err)
-	__must_hold(&hcon->hdev->lock)
 {
 	struct l2cap_conn *conn = hcon->l2cap_data;
 	struct l2cap_chan *chan, *l;
@@ -1834,10 +1836,7 @@ static void l2cap_conn_del(struct hci_conn *hcon, int err)
 	hci_chan_del(conn->hchan);
 	conn->hchan = NULL;
 
-	spin_lock(&hcon->proto_lock);
 	hcon->l2cap_data = NULL;
-	spin_unlock(&hcon->proto_lock);
-
 	mutex_unlock(&conn->lock);
 	l2cap_conn_put(conn);
 }
@@ -4824,10 +4823,6 @@ static int l2cap_le_connect_rsp(struct l2cap_conn *conn,
 	if (!chan)
 		return -EBADSLT;
 
-	chan = l2cap_chan_hold_unless_zero(chan);
-	if (!chan)
-		return -EBADSLT;
-
 	err = 0;
 
 	l2cap_chan_lock(chan);
@@ -4873,7 +4868,6 @@ static int l2cap_le_connect_rsp(struct l2cap_conn *conn,
 	}
 
 	l2cap_chan_unlock(chan);
-	l2cap_chan_put(chan);
 
 	return err;
 }
@@ -7117,11 +7111,6 @@ static void l2cap_recv_frame(struct l2cap_conn *conn, struct sk_buff *skb)
 		break;
 
 	case L2CAP_CID_CONN_LESS:
-		if (skb->len < L2CAP_PSMLEN_SIZE) {
-			kfree_skb(skb);
-			break;
-		}
-
 		psm = get_unaligned((__le16 *) skb->data);
 		skb_pull(skb, L2CAP_PSMLEN_SIZE);
 		l2cap_conless_channel(conn, psm, skb);
@@ -7154,7 +7143,6 @@ static void process_pending_rx(struct work_struct *work)
 }
 
 static struct l2cap_conn *l2cap_conn_add(struct hci_conn *hcon)
-	__must_hold(&hcon->hdev->lock)
 {
 	struct l2cap_conn *conn = hcon->l2cap_data;
 	struct hci_chan *hchan;
@@ -7173,6 +7161,8 @@ static struct l2cap_conn *l2cap_conn_add(struct hci_conn *hcon)
 	}
 
 	kref_init(&conn->ref);
+	hcon->l2cap_data = conn;
+	conn->hcon = hci_conn_get(hcon);
 	conn->hchan = hchan;
 
 	BT_DBG("hcon %p conn %p hchan %p", hcon, conn, hchan);
@@ -7200,11 +7190,6 @@ static struct l2cap_conn *l2cap_conn_add(struct hci_conn *hcon)
 	INIT_DELAYED_WORK(&conn->id_addr_timer, l2cap_conn_update_id_addr);
 
 	conn->disc_reason = HCI_ERROR_REMOTE_USER_TERM;
-
-	spin_lock(&hcon->proto_lock);
-	conn->hcon = hci_conn_get(hcon);
-	hcon->l2cap_data = conn;
-	spin_unlock(&hcon->proto_lock);
 
 	return conn;
 }
@@ -7359,8 +7344,6 @@ int l2cap_chan_connect(struct l2cap_chan *chan, __le16 psm, u16 cid,
 		err = PTR_ERR(hcon);
 		goto done;
 	}
-
-	lockdep_assert_held(&hcon->hdev->lock);
 
 	conn = l2cap_conn_add(hcon);
 	if (!conn) {
@@ -7532,7 +7515,6 @@ static struct l2cap_chan *l2cap_global_fixed_chan(struct l2cap_chan *c,
 }
 
 static void l2cap_connect_cfm(struct hci_conn *hcon, u8 status)
-	__must_hold(&hcon->hdev->lock)
 {
 	struct hci_dev *hdev = hcon->hdev;
 	struct l2cap_conn *conn;
@@ -7593,22 +7575,16 @@ next:
 
 int l2cap_disconn_ind(struct hci_conn *hcon)
 {
-	struct l2cap_conn *conn;
-	int ret = HCI_ERROR_REMOTE_USER_TERM;
+	struct l2cap_conn *conn = hcon->l2cap_data;
 
 	BT_DBG("hcon %p", hcon);
 
-	spin_lock(&hcon->proto_lock);
-	conn = hcon->l2cap_data;
-	if (conn)
-		ret = conn->disc_reason;
-	spin_unlock(&hcon->proto_lock);
-
-	return ret;
+	if (!conn)
+		return HCI_ERROR_REMOTE_USER_TERM;
+	return conn->disc_reason;
 }
 
 static void l2cap_disconn_cfm(struct hci_conn *hcon, u8 reason)
-	__must_hold(&hcon->hdev->lock)
 {
 	if (hcon->type != ACL_LINK && hcon->type != LE_LINK)
 		return;
@@ -7636,7 +7612,6 @@ static inline void l2cap_check_encryption(struct l2cap_chan *chan, u8 encrypt)
 }
 
 static void l2cap_security_cfm(struct hci_conn *hcon, u8 status, u8 encrypt)
-	__must_hold(&hcon->hdev->lock)
 {
 	struct l2cap_conn *conn = hcon->l2cap_data;
 	struct l2cap_chan *chan;
@@ -7820,8 +7795,6 @@ int l2cap_recv_acldata(struct hci_dev *hdev, u16 handle,
 		kfree_skb(skb);
 		return -ENOENT;
 	}
-
-	lockdep_assert_held(&hcon->hdev->lock);
 
 	hci_conn_enter_active_mode(hcon, BT_POWER_FORCE_ACTIVE_OFF);
 

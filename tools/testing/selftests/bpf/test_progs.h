@@ -105,7 +105,6 @@ struct test_env {
 	struct test_selector tmon_selector;
 	bool verifier_stats;
 	bool debug;
-	bool error_summary;
 	enum verbosity verbosity;
 
 	bool jit_enabled;
@@ -124,9 +123,8 @@ struct test_env {
 
 	int succ_cnt; /* successful tests */
 	int sub_succ_cnt; /* successful sub-tests */
-	int fail_cnt; /* failed tests */
+	int fail_cnt; /* total failed tests + sub-tests */
 	int skip_cnt; /* skipped tests */
-	int not_built_cnt; /* tests not built */
 
 	int saved_netns_fd;
 	int workers; /* number of worker process */
@@ -565,7 +563,5 @@ struct expected_msgs {
 
 void validate_msgs(const char *log_buf, struct expected_msgs *msgs,
 		   void (*emit_fn)(const char *buf, bool force));
-void free_msgs(struct expected_msgs *msgs);
-void verify_test_stderr(struct bpf_object *obj, struct bpf_program *prog);
 
 #endif /* __TEST_PROGS_H */

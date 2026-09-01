@@ -64,7 +64,6 @@
 #include <asm/tsc.h>
 #include <asm/hypervisor.h>
 #include <asm/cpu_device_id.h>
-#include <asm/cpuid/api.h>
 #include <asm/intel-family.h>
 #include <asm/irq_regs.h>
 #include <asm/cpu.h>
@@ -1046,7 +1045,7 @@ static void local_apic_timer_interrupt(void)
 	/*
 	 * the NMI deadlock-detector uses this.
 	 */
-	inc_irq_stat(APIC_TIMER);
+	inc_irq_stat(apic_timer_irqs);
 
 	evt->event_handler(evt);
 }
@@ -1191,11 +1190,11 @@ void disable_local_APIC(void)
 	 * restore the disabled state.
 	 */
 	if (enabled_via_apicbase) {
-		struct msr val;
+		unsigned int l, h;
 
-		rdmsrq(MSR_IA32_APICBASE, val.q);
-		val.l &= ~MSR_IA32_APICBASE_ENABLE;
-		wrmsrq(MSR_IA32_APICBASE, val.q);
+		rdmsr(MSR_IA32_APICBASE, l, h);
+		l &= ~MSR_IA32_APICBASE_ENABLE;
+		wrmsr(MSR_IA32_APICBASE, l, h);
 	}
 #endif
 }
@@ -1960,8 +1959,7 @@ static bool __init detect_init_APIC(void)
 
 static bool __init apic_verify(unsigned long addr)
 {
-	struct msr val;
-	u32 features;
+	u32 features, h, l;
 
 	/*
 	 * The APIC feature bit should now be enabled
@@ -1976,9 +1974,9 @@ static bool __init apic_verify(unsigned long addr)
 
 	/* The BIOS may have set up the APIC at some other address */
 	if (boot_cpu_data.x86 >= 6) {
-		rdmsrq(MSR_IA32_APICBASE, val.q);
-		if (val.l & MSR_IA32_APICBASE_ENABLE)
-			addr = val.l & MSR_IA32_APICBASE_BASE;
+		rdmsr(MSR_IA32_APICBASE, l, h);
+		if (l & MSR_IA32_APICBASE_ENABLE)
+			addr = l & MSR_IA32_APICBASE_BASE;
 	}
 
 	register_lapic_address(addr);
@@ -1988,7 +1986,7 @@ static bool __init apic_verify(unsigned long addr)
 
 bool __init apic_force_enable(unsigned long addr)
 {
-	struct msr val;
+	u32 h, l;
 
 	if (apic_is_disabled)
 		return false;
@@ -1999,12 +1997,12 @@ bool __init apic_force_enable(unsigned long addr)
 	 * and AMD K7 (Model > 1) or later.
 	 */
 	if (boot_cpu_data.x86 >= 6) {
-		rdmsrq(MSR_IA32_APICBASE, val.q);
-		if (!(val.l & MSR_IA32_APICBASE_ENABLE)) {
+		rdmsr(MSR_IA32_APICBASE, l, h);
+		if (!(l & MSR_IA32_APICBASE_ENABLE)) {
 			pr_info("Local APIC disabled by BIOS -- reenabling.\n");
-			val.l &= ~MSR_IA32_APICBASE_BASE;
-			val.l |= MSR_IA32_APICBASE_ENABLE | addr;
-			wrmsrq(MSR_IA32_APICBASE, val.q);
+			l &= ~MSR_IA32_APICBASE_BASE;
+			l |= MSR_IA32_APICBASE_ENABLE | addr;
+			wrmsr(MSR_IA32_APICBASE, l, h);
 			enabled_via_apicbase = 1;
 		}
 	}
@@ -2116,7 +2114,7 @@ static noinline void handle_spurious_interrupt(u8 vector)
 
 	trace_spurious_apic_entry(vector);
 
-	irq_stat_inc_and_enable(IRQ_COUNT_SPURIOUS);
+	inc_irq_stat(irq_spurious_count);
 
 	/*
 	 * If this is a spurious interrupt then do not acknowledge
@@ -2188,7 +2186,7 @@ DEFINE_IDTENTRY_SYSVEC(sysvec_error_interrupt)
 		apic_write(APIC_ESR, 0);
 	v = apic_read(APIC_ESR);
 	apic_eoi();
-	irq_stat_inc_and_enable(IRQ_COUNT_PIC_APIC_ERROR);
+	atomic_inc(&irq_err_count);
 
 	apic_pr_debug("APIC error on CPU%d: %02x", smp_processor_id(), v);
 
@@ -2443,7 +2441,7 @@ static int lapic_suspend(void *data)
 
 static void lapic_resume(void *data)
 {
-	struct msr val;
+	unsigned int l, h;
 	unsigned long flags;
 	int maxlvt;
 
@@ -2476,10 +2474,10 @@ static void lapic_resume(void *data)
 		 * SMP! We'll need to do this as part of the CPU restore!
 		 */
 		if (boot_cpu_data.x86 >= 6) {
-			rdmsrq(MSR_IA32_APICBASE, val.q);
-			val.l &= ~MSR_IA32_APICBASE_BASE;
-			val.l |= MSR_IA32_APICBASE_ENABLE | mp_lapic_addr;
-			wrmsrq(MSR_IA32_APICBASE, val.q);
+			rdmsr(MSR_IA32_APICBASE, l, h);
+			l &= ~MSR_IA32_APICBASE_BASE;
+			l |= MSR_IA32_APICBASE_ENABLE | mp_lapic_addr;
+			wrmsr(MSR_IA32_APICBASE, l, h);
 		}
 	}
 

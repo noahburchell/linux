@@ -47,6 +47,9 @@ struct iio_dmabuf_priv {
 
 	u64 context;
 
+	/* Spinlock used for locking the dma_fence */
+	spinlock_t lock;
+
 	struct dma_buf_attachment *attach;
 	struct sg_table *sgt;
 	enum dma_data_direction dir;
@@ -54,12 +57,7 @@ struct iio_dmabuf_priv {
 };
 
 struct iio_dma_fence {
-	/*
-	 * Must remain the first member so the default release callback can pass
-	 * the fence directly to dma_fence_free().
-	 */
 	struct dma_fence base;
-	spinlock_t lock; /* protects base */
 	struct iio_dmabuf_priv *priv;
 	struct work_struct work;
 };
@@ -752,7 +750,7 @@ static int iio_storage_bytes_for_si(struct iio_dev *indio_dev,
 	bytes = scan_type->storagebits / 8;
 
 	if (scan_type->repeat > 1)
-		bytes *= roundup_pow_of_two(scan_type->repeat);
+		bytes *= scan_type->repeat;
 
 	return bytes;
 }
@@ -766,9 +764,7 @@ static int iio_storage_bytes_for_timestamp(struct iio_dev *indio_dev)
 }
 
 static int iio_compute_scan_bytes(struct iio_dev *indio_dev,
-				  const unsigned long *mask, bool timestamp,
-				  unsigned int *scan_bytes,
-				  unsigned int *timestamp_offset)
+				  const unsigned long *mask, bool timestamp)
 {
 	unsigned int bytes = 0;
 	int length, i, largest = 0;
@@ -790,17 +786,12 @@ static int iio_compute_scan_bytes(struct iio_dev *indio_dev,
 			return length;
 
 		bytes = ALIGN(bytes, length);
-
-		if (timestamp_offset)
-			*timestamp_offset = bytes;
-
 		bytes += length;
 		largest = max(largest, length);
 	}
 
-	*scan_bytes = ALIGN(bytes, largest);
-
-	return 0;
+	bytes = ALIGN(bytes, largest);
+	return bytes;
 }
 
 static void iio_buffer_activate(struct iio_dev *indio_dev,
@@ -845,23 +836,18 @@ static int iio_buffer_disable(struct iio_buffer *buffer,
 	return buffer->access->disable(buffer, indio_dev);
 }
 
-static int iio_buffer_update_bytes_per_datum(struct iio_dev *indio_dev,
-					     struct iio_buffer *buffer)
+static void iio_buffer_update_bytes_per_datum(struct iio_dev *indio_dev,
+					      struct iio_buffer *buffer)
 {
 	unsigned int bytes;
-	int ret;
 
 	if (!buffer->access->set_bytes_per_datum)
-		return 0;
+		return;
 
-	ret = iio_compute_scan_bytes(indio_dev, buffer->scan_mask,
-				     buffer->scan_timestamp, &bytes, NULL);
-	if (ret)
-		return ret;
+	bytes = iio_compute_scan_bytes(indio_dev, buffer->scan_mask,
+				       buffer->scan_timestamp);
 
 	buffer->access->set_bytes_per_datum(buffer, bytes);
-
-	return 0;
 }
 
 static int iio_buffer_request_update(struct iio_dev *indio_dev,
@@ -869,10 +855,7 @@ static int iio_buffer_request_update(struct iio_dev *indio_dev,
 {
 	int ret;
 
-	ret = iio_buffer_update_bytes_per_datum(indio_dev, buffer);
-	if (ret)
-		return ret;
-
+	iio_buffer_update_bytes_per_datum(indio_dev, buffer);
 	if (buffer->access->request_update) {
 		ret = buffer->access->request_update(buffer);
 		if (ret) {
@@ -899,7 +882,6 @@ struct iio_device_config {
 	unsigned int watermark;
 	const unsigned long *scan_mask;
 	unsigned int scan_bytes;
-	unsigned int scan_timestamp_offset;
 	bool scan_timestamp;
 };
 
@@ -916,7 +898,6 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 	struct iio_buffer *buffer;
 	bool scan_timestamp;
 	unsigned int modes;
-	int ret;
 
 	if (insert_buffer &&
 	    bitmap_empty(insert_buffer->scan_mask, masklength)) {
@@ -1004,12 +985,8 @@ static int iio_verify_update(struct iio_dev *indio_dev,
 		scan_mask = compound_mask;
 	}
 
-	ret = iio_compute_scan_bytes(indio_dev, scan_mask, scan_timestamp,
-				     &config->scan_bytes,
-				     &config->scan_timestamp_offset);
-	if (ret)
-		return ret;
-
+	config->scan_bytes = iio_compute_scan_bytes(indio_dev,
+						    scan_mask, scan_timestamp);
 	config->scan_mask = scan_mask;
 	config->scan_timestamp = scan_timestamp;
 
@@ -1164,7 +1141,6 @@ static int iio_enable_buffers(struct iio_dev *indio_dev,
 	indio_dev->active_scan_mask = config->scan_mask;
 	ACCESS_PRIVATE(indio_dev, scan_timestamp) = config->scan_timestamp;
 	indio_dev->scan_bytes = config->scan_bytes;
-	ACCESS_PRIVATE(indio_dev, scan_timestamp_offset) = config->scan_timestamp_offset;
 	iio_dev_opaque->currentmode = config->mode;
 
 	iio_update_demux(indio_dev);
@@ -1621,16 +1597,12 @@ static int iio_buffer_chrdev_release(struct inode *inode, struct file *filep)
 
 	wake_up(&buffer->pollq);
 
-	/*
-	 * The mutex must be unlocked before iio_device_put(), which might drop the
-	 * last reference and free the buffer.
-	 */
-	scoped_guard(mutex, &buffer->dmabufs_mutex) {
-		/* Close all attached DMABUFs */
-		list_for_each_entry_safe(priv, tmp, &buffer->dmabufs, entry) {
-			list_del_init(&priv->entry);
-			iio_buffer_dmabuf_put(priv->attach);
-		}
+	guard(mutex)(&buffer->dmabufs_mutex);
+
+	/* Close all attached DMABUFs */
+	list_for_each_entry_safe(priv, tmp, &buffer->dmabufs, entry) {
+		list_del_init(&priv->entry);
+		iio_buffer_dmabuf_put(priv->attach);
 	}
 
 	kfree(ib);
@@ -1708,6 +1680,7 @@ static int iio_buffer_attach_dmabuf(struct iio_dev_buffer_pair *ib,
 	if (!priv)
 		return -ENOMEM;
 
+	spin_lock_init(&priv->lock);
 	priv->context = dma_fence_context_alloc(1);
 
 	dmabuf = dma_buf_get(fd);
@@ -1832,9 +1805,18 @@ iio_buffer_dma_fence_get_driver_name(struct dma_fence *fence)
 	return "iio";
 }
 
+static void iio_buffer_dma_fence_release(struct dma_fence *fence)
+{
+	struct iio_dma_fence *iio_fence =
+		container_of(fence, struct iio_dma_fence, base);
+
+	kfree(iio_fence);
+}
+
 static const struct dma_fence_ops iio_buffer_dma_fence_ops = {
 	.get_driver_name	= iio_buffer_dma_fence_get_driver_name,
 	.get_timeline_name	= iio_buffer_dma_fence_get_driver_name,
+	.release		= iio_buffer_dma_fence_release,
 };
 
 static int iio_buffer_enqueue_dmabuf(struct iio_dev_buffer_pair *ib,
@@ -1888,8 +1870,6 @@ static int iio_buffer_enqueue_dmabuf(struct iio_dev_buffer_pair *ib,
 		goto err_attachment_put;
 	}
 
-	spin_lock_init(&fence->lock);
-
 	fence->priv = priv;
 
 	seqno = atomic_add_return(1, &priv->seqno);
@@ -1900,7 +1880,7 @@ static int iio_buffer_enqueue_dmabuf(struct iio_dev_buffer_pair *ib,
 	 * the dma_fence.
 	 */
 	dma_fence_init(&fence->base, &iio_buffer_dma_fence_ops,
-		       &fence->lock, priv->context, seqno);
+		       &priv->lock, priv->context, seqno);
 
 	ret = iio_dma_resv_lock(dmabuf, nonblock);
 	if (ret)
@@ -2443,7 +2423,7 @@ EXPORT_SYMBOL_GPL(iio_push_to_buffers);
 int iio_push_to_buffers_with_ts_unaligned(struct iio_dev *indio_dev,
 					  const void *data,
 					  size_t data_sz,
-					  s64 timestamp)
+					  int64_t timestamp)
 {
 	struct iio_dev_opaque *iio_dev_opaque = to_iio_dev_opaque(indio_dev);
 

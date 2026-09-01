@@ -302,12 +302,10 @@ int v9fs_init_inode(struct v9fs_session_info *v9ses,
 			goto error;
 		}
 
-		if (v9fs_proto_dotl(v9ses)) {
+		if (v9fs_proto_dotl(v9ses))
 			inode->i_op = &v9fs_symlink_inode_operations_dotl;
-			inode_nohighmem(inode);
-		} else {
+		else
 			inode->i_op = &v9fs_symlink_inode_operations;
-		}
 
 		break;
 	case S_IFDIR:
@@ -560,7 +558,7 @@ static int v9fs_remove(struct inode *dir, struct dentry *dentry, int flags)
 
 		/* invalidate all fids associated with dentry */
 		/* NOTE: This will not include open fids */
-		v9fs_dentry_fid_remove(dentry);
+		dentry->d_op->d_release(dentry);
 	}
 	return retval;
 }
@@ -645,6 +643,7 @@ error:
  * @dir: The parent directory
  * @dentry: The name of file to be created
  * @mode: The UNIX file mode to set
+ * @excl: True if the file must not yet exist
  *
  * open(.., O_CREAT) is handled in v9fs_vfs_atomic_open().  This is only called
  * for mknod(2).
@@ -653,7 +652,7 @@ error:
 
 static int
 v9fs_vfs_create(struct mnt_idmap *idmap, struct inode *dir,
-		struct dentry *dentry, umode_t mode)
+		struct dentry *dentry, umode_t mode, bool excl)
 {
 	struct v9fs_session_info *v9ses = v9fs_inode2v9ses(dir);
 	u32 perm = unixmode2p9mode(v9ses, mode);
@@ -688,7 +687,7 @@ static struct dentry *v9fs_vfs_mkdir(struct mnt_idmap *idmap, struct inode *dir,
 
 	p9_debug(P9_DEBUG_VFS, "name %pd\n", dentry);
 	v9ses = v9fs_inode2v9ses(dir);
-	perm = unixmode2p9mode(v9ses, mode);
+	perm = unixmode2p9mode(v9ses, mode | S_IFDIR);
 	fid = v9fs_create(v9ses, dir, dentry, NULL, perm, P9_OREAD);
 	if (IS_ERR(fid))
 		return ERR_CAST(fid);
@@ -735,16 +734,14 @@ struct dentry *v9fs_vfs_lookup(struct inode *dir, struct dentry *dentry,
 	name = dentry->d_name.name;
 	fid = p9_client_walk(dfid, 1, &name, 1);
 	p9_fid_put(dfid);
-	if (fid == ERR_PTR(-ENOENT)) {
+	if (fid == ERR_PTR(-ENOENT))
 		inode = NULL;
-		v9fs_ndentry_refresh_timeout(dentry);
-	} else if (IS_ERR(fid)) {
+	else if (IS_ERR(fid))
 		inode = ERR_CAST(fid);
-	} else if (v9ses->cache & (CACHE_META|CACHE_LOOSE)) {
+	else if (v9ses->cache & (CACHE_META|CACHE_LOOSE))
 		inode = v9fs_get_inode_from_fid(v9ses, fid, dir->i_sb);
-	} else {
+	else
 		inode = v9fs_get_new_inode_from_fid(v9ses, fid, dir->i_sb);
-	}
 	/*
 	 * If we had a rename on the server and a parallel lookup
 	 * for the new name, then make sure we instantiate with

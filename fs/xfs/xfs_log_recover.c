@@ -1921,6 +1921,13 @@ xlog_recover_reorder_trans(
 			xfs_warn(log->l_mp,
 				"%s: unrecognized type of log operation (%d)",
 				__func__, ITEM_TYPE(item));
+			ASSERT(0);
+			/*
+			 * return the remaining items back to the transaction
+			 * item list so they can be freed in caller.
+			 */
+			if (!list_empty(&sort_list))
+				list_splice_init(&sort_list, &trans->r_itemq);
 			error = -EFSCORRUPTED;
 			break;
 		}
@@ -1948,15 +1955,7 @@ xlog_recover_reorder_trans(
 		}
 	}
 
-	/*
-	 * Return the remaining items back to the transaction item list so they
-	 * can be freed in caller.  This should only happen when we encounter
-	 * an error.
-	 */
-	if (!list_empty(&sort_list)) {
-		ASSERT(error);
-		list_splice_init(&sort_list, &trans->r_itemq);
-	}
+	ASSERT(list_empty(&sort_list));
 	if (!list_empty(&buffer_list))
 		list_splice(&buffer_list, &trans->r_itemq);
 	if (!list_empty(&item_list))
@@ -3279,8 +3278,9 @@ xlog_do_recovery_pass(
 			 * checkpoints at this start LSN.
 			 *
 			 * Note: Shutting down the filesystem will result in the
-			 * delwri submission marking all the buffers stale and
-			 * completing them without doing any IO.
+			 * delwri submission marking all the buffers stale,
+			 * completing them and cleaning up _XBF_LOGRECOVERY
+			 * state without doing any IO.
 			 */
 			xlog_force_shutdown(log, SHUTDOWN_LOG_IO_ERROR);
 		}

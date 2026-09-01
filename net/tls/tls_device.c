@@ -531,8 +531,7 @@ handle_error:
 		if (!size) {
 last_record:
 			tls_push_record_flags = flags;
-			if ((flags & MSG_MORE) &&
-			    record->num_frags < MAX_SKB_FRAGS - 1) {
+			if (flags & MSG_MORE) {
 				more = true;
 				break;
 			}
@@ -1390,15 +1389,16 @@ static int tls_dev_event(struct notifier_block *this, unsigned long event,
 	case NETDEV_FEAT_CHANGE:
 		if (netif_is_bond_master(dev))
 			return NOTIFY_DONE;
-		if  (!dev->tlsdev_ops ||
-		     !dev->tlsdev_ops->tls_dev_add ||
-		     !dev->tlsdev_ops->tls_dev_del)
-			return NOTIFY_BAD;
 		if ((dev->features & NETIF_F_HW_TLS_RX) &&
 		    !dev->tlsdev_ops->tls_dev_resync)
 			return NOTIFY_BAD;
 
-		return NOTIFY_DONE;
+		if  (dev->tlsdev_ops &&
+		     dev->tlsdev_ops->tls_dev_add &&
+		     dev->tlsdev_ops->tls_dev_del)
+			return NOTIFY_DONE;
+		else
+			return NOTIFY_BAD;
 	case NETDEV_DOWN:
 		return tls_device_down(dev);
 	}

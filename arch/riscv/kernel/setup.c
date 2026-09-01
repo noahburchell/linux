@@ -71,13 +71,16 @@ static struct resource *standard_resources;
 static int __init add_resource(struct resource *parent,
 				struct resource *res)
 {
-	int ret;
+	int ret = 0;
 
 	ret = insert_resource(parent, res);
-	if (ret < 0)
-		pr_err("Failed to add resource %s %pR\n", res->name, res);
+	if (ret < 0) {
+		pr_err("Failed to add a %s resource at %llx\n",
+			res->name, (unsigned long long) res->start);
+		return ret;
+	}
 
-	return ret;
+	return 1;
 }
 
 static int __init add_kernel_resources(void)
@@ -320,8 +323,6 @@ void __init setup_arch(char **cmdline_p)
 
 	efi_init();
 	paging_init();
-
-	acpi_table_upgrade();
 
 	/* Parse the ACPI tables for possible boot-time configuration */
 	acpi_boot_table_init();

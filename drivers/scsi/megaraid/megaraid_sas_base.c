@@ -3072,7 +3072,7 @@ static int megasas_reset_bus_host(struct scsi_cmnd *scmd)
 
 	scmd_printk(KERN_INFO, scmd,
 		"SCSI host state: %d  SCSI host busy: %d  FW outstanding: %d\n",
-		scsi_get_host_state(scmd->device->host),
+		scmd->device->host->shost_state,
 		scsi_host_busy(scmd->device->host),
 		atomic_read(&instance->fw_outstanding));
 	/*

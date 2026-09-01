@@ -258,6 +258,9 @@ static inline struct dvobj_priv *pwrctl_to_dvobj(struct pwrctrl_priv *pwrctl_pri
 static inline struct device *dvobj_to_dev(struct dvobj_priv *dvobj)
 {
 	/* todo: get interface type from dvobj and the return the dev accordingly */
+#ifdef RTW_DVOBJ_CHIP_HW_TYPE
+#endif
+
 	return &dvobj->intf_data.func->dev;
 }
 
@@ -283,7 +286,7 @@ struct adapter {
 	struct	recv_priv recvpriv;
 	struct	sta_priv stapriv;
 	struct	security_priv securitypriv;
-	spinlock_t   security_key_mutex;
+	spinlock_t   security_key_mutex; /*  add for CONFIG_IEEE80211W, none 11w also can use */
 	struct	registry_priv registrypriv;
 	struct	eeprom_priv eeprompriv;
 
@@ -294,7 +297,7 @@ struct adapter {
 	void *HalData;
 	u32 hal_data_sz;
 
-	bool driver_stopped;
+	s32	bDriverStopped;
 	s32	bSurpriseRemoved;
 	s32  bCardDisableWOHSM;
 
@@ -380,16 +383,15 @@ struct adapter {
 /*  */
 /*  Function disabled. */
 /*  */
-#define DF_TX_BIT		BIT(0)
-#define DF_RX_BIT		BIT(1)
-#define DF_IO_BIT		BIT(2)
+#define DF_TX_BIT		BIT0
+#define DF_RX_BIT		BIT1
+#define DF_IO_BIT		BIT2
 
 /* define RTW_ENABLE_FUNC(padapter, func) (atomic_sub(&adapter_to_dvobj(padapter)->disable_func, (func))) */
 
 static inline void RTW_ENABLE_FUNC(struct adapter *padapter, int func_bit)
 {
 	int	df = atomic_read(&adapter_to_dvobj(padapter)->disable_func);
-
 	df &= ~(func_bit);
 	atomic_set(&adapter_to_dvobj(padapter)->disable_func, df);
 }
@@ -401,12 +403,12 @@ static inline void RTW_ENABLE_FUNC(struct adapter *padapter, int func_bit)
 			 RTW_IS_FUNC_DISABLED((padapter), DF_IO_BIT))
 
 #define RTW_CANNOT_RX(padapter) \
-			((padapter)->driver_stopped || \
+			((padapter)->bDriverStopped || \
 			 (padapter)->bSurpriseRemoved || \
 			 RTW_IS_FUNC_DISABLED((padapter), DF_RX_BIT))
 
 #define RTW_CANNOT_TX(padapter) \
-			((padapter)->driver_stopped || \
+			((padapter)->bDriverStopped || \
 			 (padapter)->bSurpriseRemoved || \
 			 RTW_IS_FUNC_DISABLED((padapter), DF_TX_BIT))
 

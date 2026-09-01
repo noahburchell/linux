@@ -290,7 +290,8 @@ static void sp7021_spi_setup_clk(struct spi_controller *ctlr, struct spi_transfe
 	div = max(2U, clk_rate / xfer->speed_hz);
 
 	clk_sel = (div / 2) - 1;
-	FIELD_MODIFY(SP7021_CLK_MASK, &pspim->xfer_conf, clk_sel);
+	pspim->xfer_conf &= ~SP7021_CLK_MASK;
+	pspim->xfer_conf |= FIELD_PREP(SP7021_CLK_MASK, clk_sel);
 	writel(pspim->xfer_conf, pspim->m_base + SP7021_SPI_CONFIG_REG);
 }
 
@@ -498,7 +499,7 @@ static void sp7021_spi_controller_remove(struct platform_device *pdev)
 	pm_runtime_set_suspended(&pdev->dev);
 }
 
-static int sp7021_spi_controller_suspend(struct device *dev)
+static int __maybe_unused sp7021_spi_controller_suspend(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
 	struct sp7021_spi_ctlr *pspim = spi_controller_get_devdata(ctlr);
@@ -506,7 +507,7 @@ static int sp7021_spi_controller_suspend(struct device *dev)
 	return reset_control_assert(pspim->rstc);
 }
 
-static int sp7021_spi_controller_resume(struct device *dev)
+static int __maybe_unused sp7021_spi_controller_resume(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
 	struct sp7021_spi_ctlr *pspim = spi_controller_get_devdata(ctlr);
@@ -515,6 +516,7 @@ static int sp7021_spi_controller_resume(struct device *dev)
 	return clk_prepare_enable(pspim->spi_clk);
 }
 
+#ifdef CONFIG_PM
 static int sp7021_spi_runtime_suspend(struct device *dev)
 {
 	struct spi_controller *ctlr = dev_get_drvdata(dev);
@@ -530,12 +532,13 @@ static int sp7021_spi_runtime_resume(struct device *dev)
 
 	return reset_control_deassert(pspim->rstc);
 }
+#endif
 
 static const struct dev_pm_ops sp7021_spi_pm_ops = {
-	RUNTIME_PM_OPS(sp7021_spi_runtime_suspend,
-		       sp7021_spi_runtime_resume, NULL)
-	SYSTEM_SLEEP_PM_OPS(sp7021_spi_controller_suspend,
-			    sp7021_spi_controller_resume)
+	SET_RUNTIME_PM_OPS(sp7021_spi_runtime_suspend,
+			   sp7021_spi_runtime_resume, NULL)
+	SET_SYSTEM_SLEEP_PM_OPS(sp7021_spi_controller_suspend,
+				sp7021_spi_controller_resume)
 };
 
 static const struct of_device_id sp7021_spi_controller_ids[] = {
@@ -550,7 +553,7 @@ static struct platform_driver sp7021_spi_controller_driver = {
 	.driver = {
 		.name = "sunplus,sp7021-spi-controller",
 		.of_match_table = sp7021_spi_controller_ids,
-		.pm     = pm_ptr(&sp7021_spi_pm_ops),
+		.pm     = &sp7021_spi_pm_ops,
 	},
 };
 module_platform_driver(sp7021_spi_controller_driver);

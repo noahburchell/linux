@@ -30,13 +30,11 @@
 #include <linux/mm.h>
 #include <linux/stat.h>
 #include <linux/fcntl.h>
-#include <linux/futex.h>
 #include <linux/swap.h>
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/sched/mm.h>
 #include <linux/sched/coredump.h>
-#include <linux/sched/exec_state.h>
 #include <linux/sched/signal.h>
 #include <linux/sched/numa_balancing.h>
 #include <linux/sched/task.h>
@@ -264,9 +262,6 @@ static int bprm_mm_init(struct linux_binprm *bprm)
 	err = -ENOMEM;
 	if (!mm)
 		goto err;
-
-	/* Staged for would_dump() narrowing; consumed by begin_new_exec(). */
-	bprm->user_ns = get_user_ns(current_user_ns());
 
 	/* Save current stack limit for all calculations made during exec. */
 	task_lock(current->group_leader);
@@ -837,26 +832,18 @@ EXPORT_SYMBOL(read_code);
 /*
  * Maps the mm_struct mm into the current task struct.
  * On success, this function returns with exec_update_lock
- * held for writing. The replaced address space is stashed in
- * bprm->old_mm for setup_new_exec() to release outside the lock.
+ * held for writing.
  */
-static int exec_mmap(struct linux_binprm *bprm)
+static int exec_mmap(struct mm_struct *mm)
 {
-	struct task_exec_state *exec_state __free(put_task_exec_state) = NULL;
-	struct mm_struct *mm = bprm->mm;
 	struct task_struct *tsk;
 	struct mm_struct *old_mm, *active_mm;
 	int ret;
 
-	exec_state = alloc_task_exec_state(bprm->user_ns);
-	if (!exec_state)
-		return -ENOMEM;
-
 	/* Notify parent that we're no longer interested in the old VM */
 	tsk = current;
 	old_mm = current->mm;
-	/* Clean up futexes and release the mm */
-	mm_exit_exec_release(tsk, old_mm);
+	exec_mm_release(tsk, old_mm);
 
 	ret = down_write_killable(&tsk->signal->exec_update_lock);
 	if (ret)
@@ -883,7 +870,6 @@ static int exec_mmap(struct linux_binprm *bprm)
 	tsk->active_mm = mm;
 	tsk->mm = mm;
 	mm_init_cid(mm, tsk);
-	exec_state = task_exec_state_replace(tsk, exec_state);
 	/*
 	 * This prevents preemption while active_mm is being loaded and
 	 * it and mm are being updated, which could cause problems for
@@ -902,21 +888,13 @@ static int exec_mmap(struct linux_binprm *bprm)
 	if (old_mm) {
 		mmap_read_unlock(old_mm);
 		BUG_ON(active_mm != old_mm);
-		/* Defer teardown to setup_new_exec(), outside the exec locks. */
-		bprm->old_mm = old_mm;
-	} else {
-		mmdrop_lazy_tlb(active_mm);
+		setmax_mm_hiwater_rss(&tsk->signal->maxrss, old_mm);
+		mm_update_next_owner(old_mm);
+		mmput(old_mm);
+		return 0;
 	}
-	futex_exec_done(tsk);
+	mmdrop_lazy_tlb(active_mm);
 	return 0;
-}
-
-/* Release the address space replaced by exec, outside the exec locks. */
-static void exec_mm_put_old(struct mm_struct *old_mm)
-{
-	setmax_mm_hiwater_rss(&current->signal->maxrss, old_mm);
-	mm_update_next_owner(old_mm);
-	mmput(old_mm);
 }
 
 static int de_thread(struct task_struct *tsk)
@@ -1105,17 +1083,6 @@ void __set_task_comm(struct task_struct *tsk, const char *buf, bool exec)
 }
 
 /*
- * The file the process presents as: its exe link and comm. A transparent
- * dispatch presents as the binary, which is bprm->executable.
- */
-static struct file *bprm_identity_file(const struct linux_binprm *bprm)
-{
-	if (bprm->interp_flags & BINPRM_FLAGS_TRANSPARENT_INTERP)
-		return bprm->executable;
-	return bprm->file;
-}
-
-/*
  * Calling this is the point of no return. None of the failures will be
  * seen by userspace since either the process is already taking a fatal
  * signal (via de_thread() or coredump), or will have SEGV raised
@@ -1125,10 +1092,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 {
 	struct task_struct *me = current;
 	int retval;
-
-	/* A pending PT_INTERP substitution this format cannot consume. */
-	if (bprm->loader)
-		return -ENOEXEC;
 
 	/* Once we are committed compute the creds */
 	retval = bprm_creds_from_file(bprm);
@@ -1169,7 +1132,7 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * not visible until then. Doing it here also ensures
 	 * we don't race against replace_mm_exe_file().
 	 */
-	retval = set_mm_exe_file(bprm->mm, bprm_identity_file(bprm));
+	retval = set_mm_exe_file(bprm->mm, bprm->file);
 	if (retval)
 		goto out;
 
@@ -1182,7 +1145,7 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * Release all of the old mmap stuff
 	 */
 	acct_arg_size(bprm, 0);
-	retval = exec_mmap(bprm);
+	retval = exec_mmap(bprm->mm);
 	if (retval)
 		goto out;
 
@@ -1247,9 +1210,9 @@ int begin_new_exec(struct linux_binprm * bprm)
 	if (bprm->interp_flags & BINPRM_FLAGS_ENFORCE_NONDUMP ||
 	    !(uid_eq(current_euid(), current_uid()) &&
 	      gid_eq(current_egid(), current_gid())))
-		task_exec_state_set_dumpable(suid_dumpable);
+		set_dumpable(current->mm, suid_dumpable);
 	else
-		task_exec_state_set_dumpable(TASK_DUMPABLE_OWNER);
+		set_dumpable(current->mm, SUID_DUMP_USER);
 
 	perf_event_exec();
 
@@ -1259,8 +1222,6 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * Let's fix it up to be something reasonable.
 	 */
 	if (bprm->comm_from_dentry) {
-		struct file *comm_file = bprm_identity_file(bprm);
-
 		/*
 		 * Hold RCU lock to keep the name from being freed behind our back.
 		 * Use acquire semantics to make sure the terminating NUL from
@@ -1270,7 +1231,7 @@ int begin_new_exec(struct linux_binprm * bprm)
 		 * detecting a concurrent rename and just want a terminated name.
 		 */
 		rcu_read_lock();
-		__set_task_comm(me, smp_load_acquire(&comm_file->f_path.dentry->d_name.name),
+		__set_task_comm(me, smp_load_acquire(&bprm->file->f_path.dentry->d_name.name),
 				true);
 		rcu_read_unlock();
 	} else {
@@ -1300,7 +1261,7 @@ int begin_new_exec(struct linux_binprm * bprm)
 	 * wait until new credentials are committed
 	 * by commit_creds() above
 	 */
-	if (task_exec_state_get_dumpable(me) != TASK_DUMPABLE_OWNER)
+	if (get_dumpable(me->mm) != SUID_DUMP_USER)
 		perf_event_exit_task(me);
 	/*
 	 * cred_guard_mutex must be held at least to this point to prevent
@@ -1311,17 +1272,10 @@ int begin_new_exec(struct linux_binprm * bprm)
 
 	/* Pass the opened binary to the interpreter. */
 	if (bprm->have_execfd) {
-		struct file *executable = bprm->executable;
-
-		/* mm->exe_file carries its own write denial now so drop it. */
-		exe_file_allow_write_access(executable);
-		bprm->executable = NULL;
-		retval = FD_ADD(0, executable);
-		if (retval < 0) {
-			/* The reference was not consumed. */
-			fput(executable);
+		retval = FD_ADD(0, bprm->executable);
+		if (retval < 0)
 			goto out_unlock;
-		}
+		bprm->executable = NULL;
 		bprm->execfd = retval;
 	}
 	return 0;
@@ -1344,14 +1298,14 @@ void would_dump(struct linux_binprm *bprm, struct file *file)
 		struct user_namespace *old, *user_ns;
 		bprm->interp_flags |= BINPRM_FLAGS_ENFORCE_NONDUMP;
 
-		/* Ensure bprm->user_ns contains the executable. */
-		user_ns = old = bprm->user_ns;
+		/* Ensure mm->user_ns contains the executable */
+		user_ns = old = bprm->mm->user_ns;
 		while ((user_ns != &init_user_ns) &&
 		       !privileged_wrt_inode_uidgid(user_ns, idmap, inode))
 			user_ns = user_ns->parent;
 
 		if (old != user_ns) {
-			bprm->user_ns = get_user_ns(user_ns);
+			bprm->mm->user_ns = get_user_ns(user_ns);
 			put_user_ns(old);
 		}
 	}
@@ -1374,12 +1328,6 @@ void setup_new_exec(struct linux_binprm * bprm)
 	me->mm->task_size = TASK_SIZE;
 	up_write(&me->signal->exec_update_lock);
 	mutex_unlock(&me->signal->cred_guard_mutex);
-
-	/* The exec locks are dropped: release the old address space now. */
-	if (bprm->old_mm) {
-		exec_mm_put_old(bprm->old_mm);
-		bprm->old_mm = NULL;
-	}
 }
 EXPORT_SYMBOL(setup_new_exec);
 
@@ -1421,47 +1369,12 @@ static void do_close_execat(struct file *file)
 	fput(file);
 }
 
-/**
- * bprm_open_interpreter - open the interpreter the binary asks for
- * @bprm: binary that is being executed
- * @path: the interpreter path named in the binary's PT_INTERP
- *
- * A binfmt_misc loader entry substitutes for the interpreter the binary
- * names. Hand out the stashed substitute if there is one and open @path
- * if there is not. The caller owns the reference either way and releases
- * it like any other open_exec() one.
- *
- * Return: the interpreter on success, an ERR_PTR on failure
- */
-struct file *bprm_open_interpreter(struct linux_binprm *bprm, const char *path)
-{
-	if (bprm->loader)
-		return no_free_ptr(bprm->loader);
-	return open_exec(path);
-}
-
-/**
- * bprm_drop_loader - discard a PT_INTERP substitute that does not apply
- * @bprm: binary that is being executed
- *
- * A binary without PT_INTERP has nothing to substitute for, so drop the
- * override and let the binary load natively rather than have
- * begin_new_exec() refuse it. A no-op once bprm_open_interpreter() took
- * the substitute.
- */
-void bprm_drop_loader(struct linux_binprm *bprm)
-{
-	do_close_execat(no_free_ptr(bprm->loader));
-}
-
 static void free_bprm(struct linux_binprm *bprm)
 {
 	if (bprm->mm) {
 		acct_arg_size(bprm, 0);
 		mmput(bprm->mm);
 	}
-	if (bprm->user_ns)
-		put_user_ns(bprm->user_ns);
 	free_arg_pages(bprm);
 	if (bprm->cred) {
 		/* in case exec fails before de_thread() succeeds */
@@ -1469,20 +1382,12 @@ static void free_bprm(struct linux_binprm *bprm)
 		mutex_unlock(&current->signal->cred_guard_mutex);
 		abort_creds(bprm->cred);
 	}
-	/* exec swapped the mm but failed before setup_new_exec() freed it */
-	if (bprm->old_mm)
-		exec_mm_put_old(bprm->old_mm);
 	do_close_execat(bprm->file);
-	/* An unconsumed PT_INTERP substitute from a binfmt_misc loader entry. */
-	bprm_drop_loader(bprm);
-	do_close_execat(bprm->executable);
+	if (bprm->executable)
+		fput(bprm->executable);
 	/* If a binfmt changed the interp, free it. */
 	if (bprm->interp != bprm->filename)
 		kfree(bprm->interp);
-	kfree(bprm->bpf_interp);
-	if (bprm->bpf_interp_file)
-		fput(bprm->bpf_interp_file);
-	kfree(bprm->bpf_interp_arg);
 	kfree(bprm->fdpath);
 	kfree(bprm);
 }
@@ -1782,7 +1687,7 @@ static int exec_binprm(struct linux_binprm *bprm)
 	old_vpid = task_pid_nr_ns(current, task_active_pid_ns(current->parent));
 	rcu_read_unlock();
 
-	/* This allows 5 levels of binfmt rewrites before failing hard. */
+	/* This allows 4 levels of binfmt rewrites before failing hard. */
 	for (depth = 0;; depth++) {
 		struct file *exec;
 		if (depth > 5)
@@ -1794,23 +1699,19 @@ static int exec_binprm(struct linux_binprm *bprm)
 		if (!bprm->interpreter)
 			break;
 
-		/* A stashed PT_INTERP substitute belonged to the replaced file. */
-		bprm_drop_loader(bprm);
-
 		exec = bprm->file;
 		bprm->file = bprm->interpreter;
 		bprm->interpreter = NULL;
 
+		exe_file_allow_write_access(exec);
 		if (unlikely(bprm->have_execfd)) {
 			if (bprm->executable) {
-				do_close_execat(exec);
+				fput(exec);
 				return -ENOEXEC;
 			}
-			/* Kept for AT_EXECFD; the write denial rides along until hand-over. */
 			bprm->executable = exec;
-		} else {
-			do_close_execat(exec);
-		}
+		} else
+			fput(exec);
 	}
 
 	audit_bprm(bprm);
@@ -2004,6 +1905,17 @@ void set_binfmt(struct linux_binfmt *new)
 }
 EXPORT_SYMBOL(set_binfmt);
 
+/*
+ * set_dumpable stores three-value SUID_DUMP_* into mm->flags.
+ */
+void set_dumpable(struct mm_struct *mm, int value)
+{
+	if (WARN_ON((unsigned)value > SUID_DUMP_ROOT))
+		return;
+
+	__mm_flags_set_mask_dumpable(mm, value);
+}
+
 static inline struct user_arg_ptr native_arg(const char __user *const __user *p)
 {
 	return (struct user_arg_ptr){.ptr.native = p};
@@ -2063,11 +1975,9 @@ COMPAT_SYSCALL_DEFINE5(execveat, int, fd,
 static int proc_dointvec_minmax_coredump(const struct ctl_table *table, int write,
 		void *buffer, size_t *lenp, loff_t *ppos)
 {
-	int error, old = READ_ONCE(suid_dumpable);
+	int error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
 
-	error = proc_dointvec_minmax(table, write, buffer, lenp, ppos);
-
-	if (!error && write && (old != READ_ONCE(suid_dumpable)))
+	if (!error && write)
 		validate_coredump_safety();
 	return error;
 }

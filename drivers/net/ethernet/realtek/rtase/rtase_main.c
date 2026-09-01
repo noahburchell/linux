@@ -977,9 +977,6 @@ static void rtase_hw_config(struct net_device *dev)
 	rtase_hw_set_features(dev, dev->features);
 
 	/* enable flow control */
-	reg_data16 = rtase_r16(tp, RTASE_GPHY_STD_00);
-	reg_data16 &= ~(RTASE_TXFLOW_EN | RTASE_RXFLOW_EN);
-	rtase_w16(tp, RTASE_GPHY_STD_00, reg_data16);
 	reg_data16 = rtase_r16(tp, RTASE_CPLUS_CMD);
 	reg_data16 |= (RTASE_FORCE_TXFLOW_EN | RTASE_FORCE_RXFLOW_EN);
 	rtase_w16(tp, RTASE_CPLUS_CMD, reg_data16);
@@ -1623,9 +1620,6 @@ static netdev_tx_t rtase_start_xmit(struct sk_buff *skb,
 err_dma_1:
 	ring->skbuff[entry] = NULL;
 	rtase_tx_clear_range(ring, ring->cur_idx + 1, frags);
-	if (frags)
-		/* the frags were cleared above, along with the skb */
-		return NETDEV_TX_OK;
 
 err_dma_0:
 	tp->stats.tx_dropped++;

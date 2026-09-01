@@ -59,7 +59,6 @@
 #include <linux/string.h>
 #include <linux/list.h>
 #include <linux/uaccess.h>
-#include <linux/uio.h>
 
 #include <linux/kernel.h>
 #include <linux/spinlock.h>
@@ -1336,7 +1335,7 @@ static int pppol2tp_session_getsockopt(struct sock *sk,
  * or the special tunnel type.
  */
 static int pppol2tp_getsockopt(struct socket *sock, int level, int optname,
-			       sockopt_t *opt)
+			       char __user *optval, int __user *optlen)
 {
 	struct sock *sk = sock->sk;
 	struct l2tp_session *session;
@@ -1347,7 +1346,9 @@ static int pppol2tp_getsockopt(struct socket *sock, int level, int optname,
 	if (level != SOL_PPPOL2TP)
 		return -EINVAL;
 
-	len = opt->optlen;
+	if (get_user(len, optlen))
+		return -EFAULT;
+
 	if (len < 0)
 		return -EINVAL;
 
@@ -1375,9 +1376,14 @@ static int pppol2tp_getsockopt(struct socket *sock, int level, int optname,
 			goto end_put_sess;
 	}
 
-	opt->optlen = len;
-	if (copy_to_iter(&val, len, &opt->iter_out) != len)
-		err = -EFAULT;
+	err = -EFAULT;
+	if (put_user(len, optlen))
+		goto end_put_sess;
+
+	if (copy_to_user((void __user *)optval, &val, len))
+		goto end_put_sess;
+
+	err = 0;
 
 end_put_sess:
 	l2tp_session_put(session);
@@ -1597,53 +1603,7 @@ static const struct seq_operations pppol2tp_seq_ops = {
 	.stop		= pppol2tp_seq_stop,
 	.show		= pppol2tp_seq_show,
 };
-
-static int pppol2tp_proc_open(struct inode *inode, struct file *file)
-{
-	struct net *net = pde_data(inode);
-	struct pppol2tp_seq_data *pd;
-
-	net = maybe_get_net(net);
-	if (!net)
-		return -ENXIO;
-
-	pd = __seq_open_private(file, &pppol2tp_seq_ops, sizeof(*pd));
-	if (!pd) {
-		put_net(net);
-		return -ENOMEM;
-	}
-
-#ifdef CONFIG_NET_NS
-	pd->p.net = net;
-	netns_tracker_alloc(net, &pd->p.ns_tracker, GFP_KERNEL);
-#endif
-	return 0;
-}
-
-static int pppol2tp_proc_release(struct inode *inode, struct file *file)
-{
-	struct seq_file *seq = file->private_data;
-	struct pppol2tp_seq_data *pd = seq->private;
-
-	if (pd->session)
-		l2tp_session_put(pd->session);
-	if (pd->tunnel)
-		l2tp_tunnel_put(pd->tunnel);
-
-#ifdef CONFIG_NET_NS
-	put_net_track(pd->p.net, &pd->p.ns_tracker);
-#else
-	put_net(&init_net);
-#endif
-	return seq_release_private(inode, file);
-}
-
-static const struct proc_ops pppol2tp_proc_ops = {
-	.proc_open	= pppol2tp_proc_open,
-	.proc_read	= seq_read,
-	.proc_lseek	= seq_lseek,
-	.proc_release	= pppol2tp_proc_release,
-};
+#endif /* CONFIG_PROC_FS */
 
 /*****************************************************************************
  * Network namespace
@@ -1654,8 +1614,8 @@ static __net_init int pppol2tp_init_net(struct net *net)
 	struct proc_dir_entry *pde;
 	int err = 0;
 
-	pde = proc_create_data("pppol2tp", 0444, net->proc_net,
-			       &pppol2tp_proc_ops, net);
+	pde = proc_create_net("pppol2tp", 0444, net->proc_net,
+			      &pppol2tp_seq_ops, sizeof(struct pppol2tp_seq_data));
 	if (!pde) {
 		err = -ENOMEM;
 		goto out;
@@ -1670,13 +1630,9 @@ static __net_exit void pppol2tp_exit_net(struct net *net)
 	remove_proc_entry("pppol2tp", net->proc_net);
 }
 
-#endif /* CONFIG_PROC_FS */
-
 static struct pernet_operations pppol2tp_net_ops = {
-#ifdef CONFIG_PROC_FS
 	.init = pppol2tp_init_net,
 	.exit = pppol2tp_exit_net,
-#endif
 };
 
 /*****************************************************************************
@@ -1696,7 +1652,7 @@ static const struct proto_ops pppol2tp_ops = {
 	.listen		= sock_no_listen,
 	.shutdown	= sock_no_shutdown,
 	.setsockopt	= pppol2tp_setsockopt,
-	.getsockopt_iter = pppol2tp_getsockopt,
+	.getsockopt	= pppol2tp_getsockopt,
 	.sendmsg	= pppol2tp_sendmsg,
 	.recvmsg	= pppol2tp_recvmsg,
 	.mmap		= sock_no_mmap,

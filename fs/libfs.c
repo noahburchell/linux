@@ -78,7 +78,8 @@ struct dentry *simple_lookup(struct inode *dir, struct dentry *dentry, unsigned 
 	if (IS_ENABLED(CONFIG_UNICODE) && IS_CASEFOLDED(dir))
 		return NULL;
 
-	return d_splice_alias(NULL, dentry);
+	d_add(dentry, NULL);
+	return NULL;
 }
 EXPORT_SYMBOL(simple_lookup);
 
@@ -1258,7 +1259,7 @@ char *simple_transaction_get(struct file *file, const char __user *buf, size_t s
 	if (size > SIMPLE_TRANSACTION_LIMIT - 1)
 		return ERR_PTR(-EFBIG);
 
-	ar = kzalloc(PAGE_SIZE, GFP_KERNEL);
+	ar = (struct simple_transaction_argresp *)get_zeroed_page(GFP_KERNEL);
 	if (!ar)
 		return ERR_PTR(-ENOMEM);
 
@@ -1267,7 +1268,7 @@ char *simple_transaction_get(struct file *file, const char __user *buf, size_t s
 	/* only one write allowed per open */
 	if (file->private_data) {
 		spin_unlock(&simple_transaction_lock);
-		kfree(ar);
+		free_page((unsigned long)ar);
 		return ERR_PTR(-EBUSY);
 	}
 
@@ -1294,7 +1295,7 @@ EXPORT_SYMBOL(simple_transaction_read);
 
 int simple_transaction_release(struct inode *inode, struct file *file)
 {
-	kfree(file->private_data);
+	free_page((unsigned long)file->private_data);
 	return 0;
 }
 EXPORT_SYMBOL(simple_transaction_release);
@@ -1559,12 +1560,9 @@ int simple_fsync_noflush(struct file *file, loff_t start, loff_t end,
 	if (err)
 		return err;
 
-	if (!(inode_state_read_once(inode) &
-			(I_DIRTY_ALL | I_SYNC | I_METADATA_WRITEBACK)))
+	if (!(inode_state_read_once(inode) & I_DIRTY_ALL))
 		goto out;
-	if (datasync &&
-	    !(inode_state_read_once(inode) &
-			(I_DIRTY_DATASYNC | I_SYNC | I_METADATA_WRITEBACK)))
+	if (datasync && !(inode_state_read_once(inode) & I_DIRTY_DATASYNC))
 		goto out;
 
 	ret = sync_inode_metadata(inode, 1);

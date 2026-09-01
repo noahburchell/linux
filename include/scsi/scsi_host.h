@@ -2,7 +2,6 @@
 #ifndef _SCSI_SCSI_HOST_H
 #define _SCSI_SCSI_HOST_H
 
-#include <linux/cleanup.h>
 #include <linux/device.h>
 #include <linux/list.h>
 #include <linux/types.h>
@@ -665,9 +664,6 @@ struct Scsi_Host {
 	/* Asynchronous scan in progress */
 	bool async_scan __guarded_by(&scan_mutex);
 
-	/* Don't resume host in EH */
-	bool eh_noresume;
-
 	unsigned active_mode:2;
 
 	/*
@@ -685,6 +681,9 @@ struct Scsi_Host {
 
 	/* Task mgmt function in progress */
 	unsigned tmf_in_progress:1;
+
+	/* Don't resume host in EH */
+	unsigned eh_noresume:1;
 
 	/* The controller does not support WRITE SAME */
 	unsigned no_write_same:1;
@@ -728,7 +727,7 @@ struct Scsi_Host {
 	unsigned int  irq;
 	
 
-	enum scsi_host_state shost_state __guarded_by(host_lock);
+	enum scsi_host_state shost_state;
 
 	/* ldm bits */
 	struct device		shost_gendev, shost_dev;
@@ -789,18 +788,11 @@ static inline struct Scsi_Host *dev_to_shost(struct device *dev)
 	return container_of(dev, struct Scsi_Host, shost_gendev);
 }
 
-static inline enum scsi_host_state scsi_get_host_state(struct Scsi_Host *shost)
-{
-	return context_unsafe(READ_ONCE(shost->shost_state));
-}
-
 static inline int scsi_host_in_recovery(struct Scsi_Host *shost)
 {
-	enum scsi_host_state state = scsi_get_host_state(shost);
-
-	return state == SHOST_RECOVERY ||
-		state == SHOST_CANCEL_RECOVERY ||
-		state == SHOST_DEL_RECOVERY ||
+	return shost->shost_state == SHOST_RECOVERY ||
+		shost->shost_state == SHOST_CANCEL_RECOVERY ||
+		shost->shost_state == SHOST_DEL_RECOVERY ||
 		shost->tmf_in_progress;
 }
 
@@ -846,9 +838,8 @@ static inline struct device *scsi_get_device(struct Scsi_Host *shost)
  **/
 static inline int scsi_host_scan_allowed(struct Scsi_Host *shost)
 {
-	enum scsi_host_state state = scsi_get_host_state(shost);
-
-	return state == SHOST_RUNNING || state == SHOST_RECOVERY;
+	return shost->shost_state == SHOST_RUNNING ||
+	       shost->shost_state == SHOST_RECOVERY;
 }
 
 extern void scsi_unblock_requests(struct Scsi_Host *);
@@ -952,7 +943,6 @@ static inline unsigned char scsi_host_get_guard(struct Scsi_Host *shost)
 	return shost->prot_guard_type;
 }
 
-int scsi_host_set_state(struct Scsi_Host *shost, enum scsi_host_state state)
-	__must_hold(shost->host_lock);
+extern int scsi_host_set_state(struct Scsi_Host *, enum scsi_host_state);
 
 #endif /* _SCSI_SCSI_HOST_H */

@@ -715,7 +715,7 @@ static void snd_usb_init_quirk_flags(int idx, struct snd_usb_audio *chip)
 
 	/* old style option found: the position-based integer value */
 	if (quirk_flags[idx] &&
-	    !kstrtou64(quirk_flags[idx], 0, &chip->quirk_flags)) {
+	    !kstrtou32(quirk_flags[idx], 0, &chip->quirk_flags)) {
 		snd_usb_apply_flag_dbg("module param", chip, chip->quirk_flags);
 		return;
 	}
@@ -769,6 +769,7 @@ static int snd_usb_audio_create(struct usb_interface *intf,
 
 	chip = card->private_data;
 	mutex_init(&chip->mutex);
+	init_waitqueue_head(&chip->shutdown_wait);
 	chip->index = idx;
 	chip->dev = dev;
 	chip->card = card;
@@ -777,7 +778,7 @@ static int snd_usb_audio_create(struct usb_interface *intf,
 	chip->autoclock = autoclock;
 	chip->lowlatency = lowlatency;
 	atomic_set(&chip->active, 1); /* avoid autopm during probing */
-	snd_refcount_init(&chip->usage_count);
+	atomic_set(&chip->usage_count, 0);
 	atomic_set(&chip->shutdown, 0);
 
 	chip->usb_id = usb_id;
@@ -903,40 +904,6 @@ static int try_to_register_card(struct snd_usb_audio *chip, int ifnum)
 		return snd_card_register(chip->card);
 
 	return 0;
-}
-
-static void usb_audio_disconnect_components(struct snd_usb_audio *chip)
-{
-	struct snd_usb_stream *as;
-	struct snd_usb_endpoint *ep;
-	struct usb_mixer_interface *mixer;
-	struct list_head *p;
-
-	/* release the pcm resources */
-	list_for_each_entry(as, &chip->pcm_list, list) {
-		snd_usb_stream_disconnect(as);
-	}
-	/* release the endpoint resources */
-	list_for_each_entry(ep, &chip->ep_list, list) {
-		snd_usb_endpoint_release(ep);
-	}
-	/* release the midi resources */
-	list_for_each(p, &chip->midi_list) {
-		snd_usbmidi_disconnect(p);
-	}
-	snd_usb_midi_v2_disconnect_all(chip);
-	/*
-	 * Nice to check quirk && quirk->shares_media_device and
-	 * then call the snd_media_device_delete(). Don't have
-	 * access to the quirk here. snd_media_device_delete()
-	 * accesses mixer_list
-	 */
-	snd_media_device_delete(chip);
-
-	/* release mixer resources */
-	list_for_each_entry(mixer, &chip->mixer_list, list) {
-		snd_usb_mixer_disconnect(mixer);
-	}
 }
 
 /*
@@ -1111,10 +1078,8 @@ static int usb_audio_probe(struct usb_interface *intf,
 		 * decrement before memory is possibly returned.
 		 */
 		atomic_dec(&chip->active);
-		if (!chip->num_interfaces) {
-			usb_audio_disconnect_components(chip);
+		if (!chip->num_interfaces)
 			snd_card_free(chip->card);
-		}
 	}
 	return err;
 }
@@ -1127,18 +1092,49 @@ static bool __usb_audio_disconnect(struct usb_interface *intf,
 				   struct snd_usb_audio *chip,
 				   struct snd_card *card)
 {
+	struct list_head *p;
+
 	guard(mutex)(&register_mutex);
 
 	if (platform_ops && platform_ops->disconnect_cb)
 		platform_ops->disconnect_cb(chip);
 
 	if (atomic_inc_return(&chip->shutdown) == 1) {
+		struct snd_usb_stream *as;
+		struct snd_usb_endpoint *ep;
+		struct usb_mixer_interface *mixer;
+
 		/* wait until all pending tasks done;
 		 * they are protected by snd_usb_lock_shutdown()
 		 */
-		snd_refcount_sync(&chip->usage_count);
+		wait_event(chip->shutdown_wait,
+			   !atomic_read(&chip->usage_count));
 		snd_card_disconnect(card);
-		usb_audio_disconnect_components(chip);
+		/* release the pcm resources */
+		list_for_each_entry(as, &chip->pcm_list, list) {
+			snd_usb_stream_disconnect(as);
+		}
+		/* release the endpoint resources */
+		list_for_each_entry(ep, &chip->ep_list, list) {
+			snd_usb_endpoint_release(ep);
+		}
+		/* release the midi resources */
+		list_for_each(p, &chip->midi_list) {
+			snd_usbmidi_disconnect(p);
+		}
+		snd_usb_midi_v2_disconnect_all(chip);
+		/*
+		 * Nice to check quirk && quirk->shares_media_device and
+		 * then call the snd_media_device_delete(). Don't have
+		 * access to the quirk here. snd_media_device_delete()
+		 * accesses mixer_list
+		 */
+		snd_media_device_delete(chip);
+
+		/* release mixer resources */
+		list_for_each_entry(mixer, &chip->mixer_list, list) {
+			snd_usb_mixer_disconnect(mixer);
+		}
 	}
 
 	if (chip->quirk_flags & QUIRK_FLAG_DISABLE_AUTOSUSPEND)
@@ -1170,7 +1166,7 @@ int snd_usb_lock_shutdown(struct snd_usb_audio *chip)
 {
 	int err;
 
-	snd_refcount_get(&chip->usage_count);
+	atomic_inc(&chip->usage_count);
 	if (atomic_read(&chip->shutdown)) {
 		err = -EIO;
 		goto error;
@@ -1181,7 +1177,8 @@ int snd_usb_lock_shutdown(struct snd_usb_audio *chip)
 	return 0;
 
  error:
-	snd_refcount_put(&chip->usage_count);
+	if (atomic_dec_and_test(&chip->usage_count))
+		wake_up(&chip->shutdown_wait);
 	return err;
 }
 EXPORT_SYMBOL_GPL(snd_usb_lock_shutdown);
@@ -1190,7 +1187,8 @@ EXPORT_SYMBOL_GPL(snd_usb_lock_shutdown);
 void snd_usb_unlock_shutdown(struct snd_usb_audio *chip)
 {
 	snd_usb_autosuspend(chip);
-	snd_refcount_put(&chip->usage_count);
+	if (atomic_dec_and_test(&chip->usage_count))
+		wake_up(&chip->shutdown_wait);
 }
 EXPORT_SYMBOL_GPL(snd_usb_unlock_shutdown);
 
@@ -1282,11 +1280,8 @@ static int usb_audio_resume(struct usb_interface *intf)
 
 	list_for_each_entry(as, &chip->pcm_list, list) {
 		err = snd_usb_pcm_resume(as);
-		if (err < 0) {
-			if (!chip->system_suspend)
-				goto err_out;
-			goto out;
-		}
+		if (err < 0)
+			goto err_out;
 	}
 
 	/*
@@ -1295,11 +1290,8 @@ static int usb_audio_resume(struct usb_interface *intf)
 	 */
 	list_for_each_entry(mixer, &chip->mixer_list, list) {
 		err = snd_usb_mixer_resume(mixer);
-		if (err < 0) {
-			if (!chip->system_suspend)
-				goto err_out;
-			goto out;
-		}
+		if (err < 0)
+			goto err_out;
 	}
 
 	list_for_each(p, &chip->midi_list) {

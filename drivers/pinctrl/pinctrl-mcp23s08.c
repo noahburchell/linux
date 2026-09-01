@@ -5,6 +5,7 @@
 #include <linux/kernel.h>
 #include <linux/device.h>
 #include <linux/mutex.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/export.h>
 #include <linux/gpio/driver.h>
@@ -559,8 +560,11 @@ static int mcp23s08_irq_setup(struct mcp23s08 *mcp)
 	err = devm_request_threaded_irq(chip->parent, mcp->irq, NULL,
 					mcp23s08_irq,
 					irqflags, dev_name(chip->parent), mcp);
-	if (err)
+	if (err != 0) {
+		dev_err(chip->parent, "unable to request IRQ#%d: %d\n",
+			mcp->irq, err);
 		return err;
+	}
 
 	return 0;
 }

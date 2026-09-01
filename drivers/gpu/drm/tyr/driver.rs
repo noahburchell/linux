@@ -8,19 +8,12 @@ use kernel::{
     device::{
         Bound,
         Core,
-        Device,
-        DeviceContext, //
+        Device, //
     },
-    dma::{
-        Device as DmaDevice,
-        DmaMask, //
-    },
+    devres::Devres,
     drm,
     drm::ioctl,
-    io::{
-        poll,
-        Io, //
-    },
+    io::poll,
     new_mutex,
     of,
     platform,
@@ -29,6 +22,7 @@ use kernel::{
     regulator::Regulator,
     sizes::SZ_2M,
     sync::{
+        aref::ARef,
         Arc,
         Mutex, //
     },
@@ -37,39 +31,27 @@ use kernel::{
 
 use crate::{
     file::TyrDrmFileData,
-    fw::Firmware,
-    gem::Bo,
+    gem::TyrObject,
     gpu,
     gpu::GpuInfo,
-    mmu::Mmu,
-    regs::gpu_control::*, //
+    regs, //
 };
 
-pub(crate) type IoMem<'a> = kernel::io::mem::IoMem<'a, SZ_2M>;
+pub(crate) type IoMem = kernel::io::mem::IoMem<SZ_2M>;
 
 pub(crate) struct TyrDrmDriver;
 
 /// Convenience type alias for the DRM device type for this driver.
-pub(crate) type TyrDrmDevice<Ctx = drm::Normal> = drm::Device<TyrDrmDriver, Ctx>;
-
-pub(crate) struct TyrPlatformDriver;
+pub(crate) type TyrDrmDevice = drm::Device<TyrDrmDriver>;
 
 #[pin_data(PinnedDrop)]
-pub(crate) struct TyrPlatformDriverData<'bound> {
-    _reg: drm::Registration<'bound, TyrDrmDriver>,
+pub(crate) struct TyrPlatformDriverData {
+    _device: ARef<TyrDrmDevice>,
 }
 
-/// Data owned by the DRM [`Registration`].
-///
-/// This data can have references tied to the parent platform device binding scope
-/// and is accessible only while the DRM device is registered with userspace.
-#[pin_data]
-pub(crate) struct TyrDrmRegistrationData<'drm> {
-    /// Parent platform device.
-    pub(crate) pdev: &'drm platform::Device<Bound>,
-
-    /// Firmware sections.
-    pub(crate) fw: Firmware<'drm>,
+#[pin_data(PinnedDrop)]
+pub(crate) struct TyrDrmDeviceData {
+    pub(crate) pdev: ARef<platform::Device>,
 
     #[pin]
     clks: Mutex<Clocks>,
@@ -77,19 +59,18 @@ pub(crate) struct TyrDrmRegistrationData<'drm> {
     #[pin]
     regulators: Mutex<Regulators>,
 
-    /// GPU MMIO register mapping.
-    pub(crate) iomem: Arc<IoMem<'drm>>,
-
-    /// GPU information read from hardware during probe.
+    /// Some information on the GPU.
+    ///
+    /// This is mainly queried by userspace, i.e.: Mesa.
     pub(crate) gpu_info: GpuInfo,
 }
 
-fn issue_soft_reset(dev: &Device, iomem: &IoMem<'_>) -> Result {
-    iomem.write_reg(GPU_COMMAND::reset(ResetMode::SoftReset));
+fn issue_soft_reset(dev: &Device<Bound>, iomem: &Devres<IoMem>) -> Result {
+    regs::GPU_CMD.write(dev, iomem, regs::GPU_CMD_SOFT_RESET)?;
 
     poll::read_poll_timeout(
-        || Ok(iomem.read(GPU_IRQ_RAWSTAT)),
-        |status| status.reset_completed(),
+        || regs::GPU_IRQ_RAWSTAT.read(dev, iomem),
+        |status| *status & regs::GPU_IRQ_RAWSTAT_RESET_COMPLETED != 0,
         time::Delta::from_millis(1),
         time::Delta::from_millis(100),
     )
@@ -100,22 +81,22 @@ fn issue_soft_reset(dev: &Device, iomem: &IoMem<'_>) -> Result {
 
 kernel::of_device_table!(
     OF_TABLE,
-    <TyrPlatformDriver as platform::Driver>::IdInfo,
+    MODULE_OF_TABLE,
+    <TyrPlatformDriverData as platform::Driver>::IdInfo,
     [
         (of::DeviceId::new(c"rockchip,rk3588-mali"), ()),
         (of::DeviceId::new(c"arm,mali-valhall-csf"), ())
     ]
 );
 
-impl platform::Driver for TyrPlatformDriver {
+impl platform::Driver for TyrPlatformDriverData {
     type IdInfo = ();
-    type Data<'bound> = TyrPlatformDriverData<'bound>;
     const OF_ID_TABLE: Option<of::IdTable<Self::IdInfo>> = Some(&OF_TABLE);
 
-    fn probe<'bound>(
-        pdev: &'bound platform::Device<Core<'_>>,
-        _info: Option<&'bound Self::IdInfo>,
-    ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound {
+    fn probe(
+        pdev: &platform::Device<Core>,
+        _info: Option<&Self::IdInfo>,
+    ) -> impl PinInit<Self, Error> {
         let core_clk = Clk::get(pdev.as_ref(), Some(c"core"))?;
         let stacks_clk = OptionalClk::get(pdev.as_ref(), Some(c"stacks"))?;
         let coregroup_clk = OptionalClk::get(pdev.as_ref(), Some(c"coregroup"))?;
@@ -128,40 +109,18 @@ impl platform::Driver for TyrPlatformDriver {
         let sram_regulator = Regulator::<regulator::Enabled>::get(pdev.as_ref(), c"sram")?;
 
         let request = pdev.io_request_by_index(0).ok_or(ENODEV)?;
-
-        let iomem = Arc::new(request.iomap_sized::<SZ_2M>()?, GFP_KERNEL)?;
+        let iomem = Arc::pin_init(request.iomap_sized::<SZ_2M>(), GFP_KERNEL)?;
 
         issue_soft_reset(pdev.as_ref(), &iomem)?;
         gpu::l2_power_on(pdev.as_ref(), &iomem)?;
 
-        let gpu_info = GpuInfo::new(&iomem);
-        gpu_info.log(pdev.as_ref());
+        let gpu_info = GpuInfo::new(pdev.as_ref(), &iomem)?;
+        gpu_info.log(pdev);
 
-        let pa_bits = MMU_FEATURES::from_raw(gpu_info.mmu_features)
-            .pa_bits()
-            .get();
-        // SAFETY: No concurrent DMA allocations or mappings can be made because
-        // the device is still being probed and therefore isn't being used by
-        // other threads of execution.
-        unsafe { pdev.dma_set_mask_and_coherent(DmaMask::try_new(pa_bits)?)? };
+        let platform: ARef<platform::Device> = pdev.into();
 
-        let unreg_dev = drm::UnregisteredDevice::<TyrDrmDriver>::new(pdev, Ok(()))?;
-
-        let mmu = Mmu::new(pdev.as_ref(), iomem.as_arc_borrow(), &gpu_info)?;
-
-        let firmware = Firmware::new(
-            pdev.as_ref(),
-            iomem.clone(),
-            &unreg_dev,
-            mmu.as_arc_borrow(),
-            &gpu_info,
-        )?;
-
-        firmware.boot()?;
-
-        let reg_data = pin_init!(TyrDrmRegistrationData {
-                pdev,
-                fw: firmware,
+        let data = try_pin_init!(TyrDrmDeviceData {
+                pdev: platform.clone(),
                 clks <- new_mutex!(Clocks {
                     core: core_clk,
                     stacks: stacks_clk,
@@ -171,24 +130,35 @@ impl platform::Driver for TyrPlatformDriver {
                     _mali: mali_regulator,
                     _sram: sram_regulator,
                 }),
-                iomem,
                 gpu_info,
         });
 
-        // SAFETY: `reg` is stored in `TyrPlatformDriverData` and dropped when the driver is
-        // unbound; it is never forgotten.
-        let reg = unsafe { drm::Registration::new(pdev.as_ref(), unreg_dev, reg_data, 0)? };
+        let ddev: ARef<TyrDrmDevice> = drm::Device::new(pdev.as_ref(), data)?;
+        drm::driver::Registration::new_foreign_owned(&ddev, pdev.as_ref(), 0)?;
 
-        let driver = TyrPlatformDriverData { _reg: reg };
+        let driver = TyrPlatformDriverData { _device: ddev };
 
-        dev_dbg!(pdev, "Tyr initialized correctly.");
+        // We need this to be dev_info!() because dev_dbg!() does not work at
+        // all in Rust for now, and we need to see whether probe succeeded.
+        dev_info!(pdev, "Tyr initialized correctly.\n");
         Ok(driver)
     }
 }
 
 #[pinned_drop]
-impl PinnedDrop for TyrPlatformDriverData<'_> {
+impl PinnedDrop for TyrPlatformDriverData {
     fn drop(self: Pin<&mut Self>) {}
+}
+
+#[pinned_drop]
+impl PinnedDrop for TyrDrmDeviceData {
+    fn drop(self: Pin<&mut Self>) {
+        // TODO: the type-state pattern for Clks will fix this.
+        let clks = self.clks.lock();
+        clks.core.disable_unprepare();
+        clks.stacks.disable_unprepare();
+        clks.coregroup.disable_unprepare();
+    }
 }
 
 // We need to retain the name "panthor" to achieve drop-in compatibility with
@@ -203,34 +173,25 @@ const INFO: drm::DriverInfo = drm::DriverInfo {
 
 #[vtable]
 impl drm::Driver for TyrDrmDriver {
-    type Data = ();
-    type RegistrationData<'drm> = TyrDrmRegistrationData<'drm>;
+    type Data = TyrDrmDeviceData;
     type File = TyrDrmFileData;
-    type Object = Bo;
-    type ParentDevice<Ctx: DeviceContext> = platform::Device<Ctx>;
+    type Object = drm::gem::Object<TyrObject>;
 
     const INFO: drm::DriverInfo = INFO;
-    const FEAT_RENDER: bool = true;
 
     kernel::declare_drm_ioctls! {
         (PANTHOR_DEV_QUERY, drm_panthor_dev_query, ioctl::RENDER_ALLOW, TyrDrmFileData::dev_query),
     }
 }
 
+#[pin_data]
 struct Clocks {
     core: Clk,
     stacks: OptionalClk,
     coregroup: OptionalClk,
 }
 
-impl Drop for Clocks {
-    fn drop(&mut self) {
-        self.core.disable_unprepare();
-        self.stacks.disable_unprepare();
-        self.coregroup.disable_unprepare();
-    }
-}
-
+#[pin_data]
 struct Regulators {
     _mali: Regulator<regulator::Enabled>,
     _sram: Regulator<regulator::Enabled>,

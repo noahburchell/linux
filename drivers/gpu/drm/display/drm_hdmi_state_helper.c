@@ -306,18 +306,17 @@
  */
 
 /**
- * __drm_atomic_helper_connector_hdmi_state_init() - Initialize all HDMI @drm_connector_state resources
+ * __drm_atomic_helper_connector_hdmi_reset() - Initializes all HDMI @drm_connector_state resources
  * @connector: DRM connector
- * @new_conn_state: connector state to initialize
+ * @new_conn_state: connector state to reset
  *
  * Initializes all HDMI resources from a @drm_connector_state without
  * actually allocating it. This is useful for HDMI drivers, in
- * combination with __drm_atomic_helper_connector_state_init(),
- * drm_atomic_helper_connector_reset(), or
- * drm_atomic_helper_connector_create_state().
+ * combination with __drm_atomic_helper_connector_reset() or
+ * drm_atomic_helper_connector_reset().
  */
-void __drm_atomic_helper_connector_hdmi_state_init(struct drm_connector *connector,
-						   struct drm_connector_state *new_conn_state)
+void __drm_atomic_helper_connector_hdmi_reset(struct drm_connector *connector,
+					      struct drm_connector_state *new_conn_state)
 {
 	unsigned int max_bpc = connector->max_bpc;
 
@@ -325,7 +324,7 @@ void __drm_atomic_helper_connector_hdmi_state_init(struct drm_connector *connect
 	new_conn_state->max_requested_bpc = max_bpc;
 	new_conn_state->hdmi.broadcast_rgb = DRM_HDMI_BROADCAST_RGB_AUTO;
 }
-EXPORT_SYMBOL(__drm_atomic_helper_connector_hdmi_state_init);
+EXPORT_SYMBOL(__drm_atomic_helper_connector_hdmi_reset);
 
 static enum hdmi_colorspace
 output_color_format_to_hdmi_colorspace(const struct drm_connector *connector,
@@ -349,7 +348,7 @@ output_color_format_to_hdmi_colorspace(const struct drm_connector *connector,
 static const struct drm_display_mode *
 connector_state_get_mode(const struct drm_connector_state *conn_state)
 {
-	struct drm_atomic_commit *state;
+	struct drm_atomic_state *state;
 	struct drm_crtc_state *crtc_state;
 	struct drm_crtc *crtc;
 
@@ -542,11 +541,10 @@ sink_supports_format_bpc(const struct drm_connector *connector,
 		drm_dbg_kms(dev, "YUV444 format supported in that configuration.\n");
 
 		return true;
-
-	default:
-		drm_dbg_kms(dev, "Unsupported pixel format.\n");
-		return false;
 	}
+
+	drm_dbg_kms(dev, "Unsupported pixel format.\n");
+	return false;
 }
 
 static enum drm_mode_status
@@ -671,39 +669,8 @@ hdmi_compute_config(const struct drm_connector *connector,
 	unsigned int max_bpc = clamp_t(unsigned int,
 				       conn_state->max_bpc,
 				       8, connector->max_bpc);
-	enum drm_output_color_format fmt;
 	int ret;
 
-	if (conn_state->color_format != DRM_CONNECTOR_COLOR_FORMAT_AUTO) {
-		switch (conn_state->color_format) {
-		case DRM_CONNECTOR_COLOR_FORMAT_AUTO:
-			drm_warn(connector->dev, "AUTO format in non-AUTO path.\n");
-			fallthrough;
-		case DRM_CONNECTOR_COLOR_FORMAT_RGB444:
-			fmt = DRM_OUTPUT_COLOR_FORMAT_RGB444;
-			break;
-		case DRM_CONNECTOR_COLOR_FORMAT_YCBCR444:
-			fmt = DRM_OUTPUT_COLOR_FORMAT_YCBCR444;
-			break;
-		case DRM_CONNECTOR_COLOR_FORMAT_YCBCR422:
-			fmt = DRM_OUTPUT_COLOR_FORMAT_YCBCR422;
-			break;
-		case DRM_CONNECTOR_COLOR_FORMAT_YCBCR420:
-			fmt = DRM_OUTPUT_COLOR_FORMAT_YCBCR420;
-			break;
-		default:
-			drm_dbg_kms(connector->dev, "HDMI does not support color format '%d'.\n",
-				conn_state->color_format);
-			return -EINVAL;
-		}
-
-		return hdmi_compute_format_bpc(connector, conn_state, mode, max_bpc, fmt);
-	}
-
-	/*
-	 * For %DRM_CONNECTOR_COLOR_FORMAT_AUTO, try RGB first, and fall back
-	 * to the less bandwidth-intensive YCBCR420 if RGB fails.
-	 */
 	ret = hdmi_compute_format_bpc(connector, conn_state, mode, max_bpc,
 				      DRM_OUTPUT_COLOR_FORMAT_RGB444);
 	if (ret) {
@@ -891,7 +858,7 @@ hdmi_generate_infoframes(const struct drm_connector *connector,
  * Zero on success, or an errno code otherwise.
  */
 int drm_atomic_helper_connector_hdmi_check(struct drm_connector *connector,
-					   struct drm_atomic_commit *state)
+					   struct drm_atomic_state *state)
 {
 	struct drm_connector_state *old_conn_state =
 		drm_atomic_get_old_connector_state(state, connector);
@@ -943,21 +910,8 @@ drm_hdmi_connector_mode_valid(struct drm_connector *connector,
 			      const struct drm_display_mode *mode)
 {
 	unsigned long long clock;
-	enum drm_output_color_format fmt;
 
-	if (drm_mode_is_420_only(&connector->display_info, mode)) {
-		if (connector->ycbcr_420_allowed)
-			fmt = DRM_OUTPUT_COLOR_FORMAT_YCBCR420;
-		else
-			return MODE_NO_420;
-	} else if (drm_mode_is_420_also(&connector->display_info, mode) &&
-		   connector->ycbcr_420_allowed) {
-		fmt = DRM_OUTPUT_COLOR_FORMAT_YCBCR420;
-	} else {
-		fmt = DRM_OUTPUT_COLOR_FORMAT_RGB444;
-	}
-
-	clock = drm_hdmi_compute_mode_clock(mode, 8, fmt);
+	clock = drm_hdmi_compute_mode_clock(mode, 8, DRM_OUTPUT_COLOR_FORMAT_RGB444);
 	if (!clock)
 		return MODE_ERROR;
 
@@ -1046,7 +1000,7 @@ static int write_or_clear_infoframe(struct drm_connector *connector,
  * Zero on success, error code on failure.
  */
 int drm_atomic_helper_connector_hdmi_update_infoframes(struct drm_connector *connector,
-						       struct drm_atomic_commit *state)
+						       struct drm_atomic_state *state)
 {
 	const struct drm_connector_hdmi_funcs *funcs = connector->hdmi.funcs;
 	struct drm_connector_state *old_conn_state =
@@ -1142,8 +1096,7 @@ drm_atomic_helper_connector_hdmi_update_audio_infoframe(struct drm_connector *co
 
 	mutex_lock(&connector->hdmi.infoframes.lock);
 
-	BUILD_BUG_ON(sizeof(*frame) > sizeof(infoframe->data));
-	memcpy(&infoframe->data, frame, sizeof(*frame));
+	memcpy(&infoframe->data, frame, sizeof(infoframe->data));
 	infoframe->set = true;
 
 	ret = write_infoframe(connector, &funcs->audio, "Audio", infoframe);

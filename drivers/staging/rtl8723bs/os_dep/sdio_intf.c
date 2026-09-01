@@ -6,7 +6,6 @@
  ******************************************************************************/
 #include <drv_types.h>
 #include <hal_btcoex.h>
-#include <hal_data.h>
 #include <linux/jiffies.h>
 
 #ifndef dev_to_sdio_func
@@ -78,7 +77,7 @@ static int sdio_alloc_irq(struct dvobj_priv *dvobj)
 
 	sdio_release_host(func);
 
-	return err ? _FAIL : _SUCCESS;
+	return err?_FAIL:_SUCCESS;
 }
 
 static void sdio_free_irq(struct dvobj_priv *dvobj)
@@ -145,8 +144,9 @@ static void sdio_deinit(struct dvobj_priv *dvobj)
 		sdio_claim_host(func);
 		sdio_disable_func(func);
 
-		if (dvobj->irq_alloc)
+		if (dvobj->irq_alloc) {
 			sdio_release_irq(func);
+		}
 
 		sdio_release_host(func);
 	}
@@ -203,7 +203,8 @@ static void sd_intf_start(struct adapter *padapter)
 	if (!padapter)
 		return;
 
-	rtw_sdio_enable_interrupt(padapter);
+	/*  hal dep */
+	rtw_hal_enable_interrupt(padapter);
 }
 
 static void sd_intf_stop(struct adapter *padapter)
@@ -211,11 +212,12 @@ static void sd_intf_stop(struct adapter *padapter)
 	if (!padapter)
 		return;
 
-	rtw_sdio_disable_interrupt(padapter);
+	/*  hal dep */
+	rtw_hal_disable_interrupt(padapter);
 }
 
 
-static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
+static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj, const struct sdio_device_id  *pdid)
 {
 	int status = _FAIL;
 	struct net_device *pnetdev;
@@ -229,7 +231,7 @@ static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
 	padapter->dvobj = dvobj;
 	dvobj->if1 = padapter;
 
-	padapter->driver_stopped = true;
+	padapter->bDriverStopped = true;
 
 	dvobj->padapters = padapter;
 	padapter->iface_id = 0;
@@ -261,14 +263,14 @@ static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
 	if (rtw_init_io_priv(padapter, sdio_set_intf_ops) == _FAIL)
 		goto free_hal_data;
 
-	rtl8723b_read_chip_version(padapter);
+	rtw_hal_read_chip_version(padapter);
 
-	rtl8723bs_interface_configure(padapter);
+	rtw_hal_chip_configure(padapter);
 
 	hal_btcoex_Initialize((void *)padapter);
 
 	/* 3 6. read efuse/eeprom data */
-	rtw_read_adapter_info(padapter);
+	rtw_hal_read_chip_info(padapter);
 
 	/* 3 7. init driver common data */
 	if (rtw_init_drv_sw(padapter) == _FAIL)
@@ -280,13 +282,13 @@ static struct adapter *rtw_sdio_if1_init(struct dvobj_priv *dvobj)
 	/*  set mac addr */
 	rtw_macaddr_cfg(&psdio->func->dev, padapter->eeprompriv.mac_addr);
 
-	rtw_sdio_disable_interrupt(padapter);
+	rtw_hal_disable_interrupt(padapter);
 
 	status = _SUCCESS;
 
 free_hal_data:
-	if (status != _SUCCESS)
-		rtw_hal_data_deinit(padapter);
+	if (status != _SUCCESS && padapter->HalData)
+		kfree(padapter->HalData);
 
 	if (status != _SUCCESS) {
 		rtw_wdev_unregister(padapter->rtw_wdev);
@@ -334,8 +336,9 @@ static void rtw_sdio_if1_deinit(struct adapter *if1)
  * notes: drv_init() is called when the bus driver has located a card for us to support.
  *        We accept the new device by returning 0.
  */
-static int rtw_drv_init(struct sdio_func *func,
-			const struct sdio_device_id *id)
+static int rtw_drv_init(
+	struct sdio_func *func,
+	const struct sdio_device_id *id)
 {
 	int status = _FAIL;
 	struct adapter *if1 = NULL;
@@ -345,7 +348,7 @@ static int rtw_drv_init(struct sdio_func *func,
 	if (!dvobj)
 		goto exit;
 
-	if1 = rtw_sdio_if1_init(dvobj);
+	if1 = rtw_sdio_if1_init(dvobj, id);
 	if (!if1)
 		goto free_dvobj;
 
@@ -356,13 +359,10 @@ static int rtw_drv_init(struct sdio_func *func,
 
 	status = sdio_alloc_irq(dvobj);
 	if (status != _SUCCESS)
-		goto free_netdev;
+		goto free_if1;
 
 	status = _SUCCESS;
 
-free_netdev:
-	if (status != _SUCCESS)
-		rtw_unregister_netdevs(dvobj);
 free_if1:
 	if (status != _SUCCESS && if1)
 		rtw_sdio_if1_deinit(if1);
@@ -401,7 +401,7 @@ static void rtw_dev_remove(struct sdio_func *func)
 
 	LeaveAllPowerSaveMode(padapter);
 
-	rtw_btcoex_halt_notify(padapter);
+	rtw_btcoex_HaltNotify(padapter);
 
 	rtw_sdio_if1_deinit(padapter);
 
@@ -415,7 +415,7 @@ static int rtw_sdio_suspend(struct device *dev)
 	struct pwrctrl_priv *pwrpriv = dvobj_to_pwrctl(psdpriv);
 	struct adapter *padapter = psdpriv->if1;
 
-	if (padapter->driver_stopped)
+	if (padapter->bDriverStopped)
 		return 0;
 
 	if (pwrpriv->bInSuspend)

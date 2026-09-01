@@ -25,29 +25,22 @@
 #define _GNU_SOURCE
 
 #include "futextest.h"
-#include "kselftest_harness.h"
+#include "../../kselftest_harness.h"
 
-#include <dlfcn.h>
 #include <errno.h>
 #include <pthread.h>
 #include <signal.h>
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stddef.h>
-#include <stdint.h>
-#include <stdlib.h>
-#include <string.h>
-#include <sys/auxv.h>
 #include <sys/mman.h>
 #include <sys/wait.h>
 
 #define STACK_SIZE (1024 * 1024)
-#define FUTEX_TIMEOUT 3
-#define SLEEP_US 100
 
-#if __SIZEOF_LONG__ == 8
-# define BUILD_64
-#endif
+#define FUTEX_TIMEOUT 3
+
+#define SLEEP_US 100
 
 static pthread_barrier_t barrier, barrier2;
 
@@ -61,56 +54,34 @@ static int get_robust_list(int pid, struct robust_list_head **head, size_t *len_
 	return syscall(SYS_get_robust_list, pid, head, len_ptr);
 }
 
-static int sys_futex_robust_unlock(_Atomic(uint32_t) *uaddr, unsigned int op, int val,
-				   void *list_op_pending, unsigned int val3)
-{
-	return syscall(SYS_futex, uaddr, op, val, NULL, list_op_pending, val3, 0);
-}
-
 /*
  * Basic lock struct, contains just the futex word and the robust list element
  * Real implementations have also a *prev to easily walk in the list
  */
-typedef _Atomic(unsigned int) atomic_futex_t;
-
 struct lock_struct {
-	atomic_futex_t		futex;
+	_Atomic(unsigned int)	futex;
 	struct robust_list	list;
-};
-
-struct child_args {
-	struct __test_metadata	*_metadata;
-	void			*arg;
 };
 
 /*
  * Helper function to spawn a child thread. Returns -1 on error, pid on success
  */
-static int create_child(struct __test_metadata *_metadata, int (*fn)(void *arg), void *arg)
+static int create_child(int (*fn)(void *arg), void *arg)
 {
-	struct child_args *cargs = malloc(sizeof(*cargs));
 	char *stack;
 	pid_t pid;
 
-	if (!cargs)
-		return -1;
-	cargs->_metadata = _metadata;
-	cargs->arg = arg;
-
 	stack = mmap(NULL, STACK_SIZE, PROT_READ | PROT_WRITE,
 		     MAP_PRIVATE | MAP_ANONYMOUS | MAP_STACK, -1, 0);
-	if (stack == MAP_FAILED) {
-		free(cargs);
+	if (stack == MAP_FAILED)
 		return -1;
-	}
 
 	stack += STACK_SIZE;
 
-	pid = clone(fn, stack, CLONE_VM | SIGCHLD, cargs);
-	if (pid == -1) {
-		free(cargs);
+	pid = clone(fn, stack, CLONE_VM | SIGCHLD, arg);
+
+	if (pid == -1)
 		return -1;
-	}
 
 	return pid;
 }
@@ -139,7 +110,7 @@ static int set_list(struct robust_list_head *head)
  */
 static int mutex_lock(struct lock_struct *lock, struct robust_list_head *head, bool error_inject)
 {
-	atomic_futex_t *futex = &lock->futex;
+	_Atomic(unsigned int) *futex = &lock->futex;
 	unsigned int zero = 0;
 	pid_t tid = gettid();
 	int ret = -1;
@@ -199,21 +170,21 @@ static int mutex_lock(struct lock_struct *lock, struct robust_list_head *head, b
  */
 static int child_fn_lock(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct __test_metadata *_metadata = cargs->_metadata;
-	struct lock_struct *lock = cargs->arg;
+	struct lock_struct *lock = arg;
 	struct robust_list_head head;
 	int ret;
 
-	free(cargs);
-
 	ret = set_list(&head);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("set_robust_list error");
+	if (ret) {
+		ksft_test_result_fail("set_robust_list error\n");
+		return ret;
+	}
 
 	ret = mutex_lock(lock, &head, false);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("mutex_lock error");
+	if (ret) {
+		ksft_test_result_fail("mutex_lock error\n");
+		return ret;
+	}
 
 	pthread_barrier_wait(&barrier);
 
@@ -236,7 +207,7 @@ static int child_fn_lock(void *arg)
 TEST(test_robustness)
 {
 	struct lock_struct lock = { .futex = 0 };
-	atomic_futex_t *futex = &lock.futex;
+	_Atomic(unsigned int) *futex = &lock.futex;
 	struct robust_list_head head;
 	int ret, pid, wstatus;
 
@@ -250,7 +221,7 @@ TEST(test_robustness)
 	ret = pthread_barrier_init(&barrier, NULL, 2);
 	ASSERT_EQ(ret, 0);
 
-	pid = create_child(_metadata, &child_fn_lock, &lock);
+	pid = create_child(&child_fn_lock, &lock);
 	ASSERT_NE(pid, -1);
 
 	pthread_barrier_wait(&barrier);
@@ -267,8 +238,9 @@ TEST(test_robustness)
 	wait(&wstatus);
 	pthread_barrier_destroy(&barrier);
 
-	EXPECT_EQ(WEXITSTATUS(wstatus), 0)
-		TH_LOG("child failed");
+	/* Pass only if the child hasn't return error */
+	if (!WEXITSTATUS(wstatus))
+		ksft_test_result_pass("%s\n", __func__);
 }
 
 /*
@@ -294,6 +266,8 @@ TEST(test_set_robust_list_invalid_size)
 	ret = set_robust_list(&head, 0);
 	ASSERT_EQ(ret, -1);
 	ASSERT_EQ(errno, EINVAL);
+
+	ksft_test_result_pass("%s\n", __func__);
 }
 
 /*
@@ -320,20 +294,20 @@ TEST(test_get_robust_list_self)
 	ASSERT_EQ(ret, 0);
 	ASSERT_EQ(get_head, &head2);
 	ASSERT_EQ(head_size, len_ptr);
+
+	ksft_test_result_pass("%s\n", __func__);
 }
 
 static int child_list(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct __test_metadata *_metadata = cargs->_metadata;
-	struct robust_list_head *head = cargs->arg;
+	struct robust_list_head *head = arg;
 	int ret;
 
-	free(cargs);
-
 	ret = set_robust_list(head, sizeof(*head));
-	ASSERT_EQ(ret, 0)
-		TH_LOG("set_robust_list error");
+	if (ret) {
+		ksft_test_result_fail("set_robust_list error\n");
+		return -1;
+	}
 
 	/*
 	 * After setting the list head, wait until the main thread can call
@@ -363,7 +337,7 @@ TEST(test_get_robust_list_child)
 	ret = pthread_barrier_init(&barrier2, NULL, 2);
 	ASSERT_EQ(ret, 0);
 
-	tid = create_child(_metadata, &child_list, &head);
+	tid = create_child(&child_list, &head);
 	ASSERT_NE(tid, -1);
 
 	pthread_barrier_wait(&barrier);
@@ -378,27 +352,28 @@ TEST(test_get_robust_list_child)
 	pthread_barrier_destroy(&barrier);
 	pthread_barrier_destroy(&barrier2);
 
-	EXPECT_EQ(WEXITSTATUS(wstatus), 0)
-		TH_LOG("child failed");
+	/* Pass only if the child hasn't return error */
+	if (!WEXITSTATUS(wstatus))
+		ksft_test_result_pass("%s\n", __func__);
 }
 
 static int child_fn_lock_with_error(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct __test_metadata *_metadata = cargs->_metadata;
-	struct lock_struct *lock = cargs->arg;
+	struct lock_struct *lock = arg;
 	struct robust_list_head head;
 	int ret;
 
-	free(cargs);
-
 	ret = set_list(&head);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("set_robust_list error");
+	if (ret) {
+		ksft_test_result_fail("set_robust_list error\n");
+		return -1;
+	}
 
 	ret = mutex_lock(lock, &head, true);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("mutex_lock error");
+	if (ret) {
+		ksft_test_result_fail("mutex_lock error\n");
+		return -1;
+	}
 
 	pthread_barrier_wait(&barrier);
 
@@ -416,7 +391,7 @@ static int child_fn_lock_with_error(void *arg)
 TEST(test_set_list_op_pending)
 {
 	struct lock_struct lock = { .futex = 0 };
-	atomic_futex_t *futex = &lock.futex;
+	_Atomic(unsigned int) *futex = &lock.futex;
 	struct robust_list_head head;
 	int ret, wstatus;
 
@@ -426,7 +401,7 @@ TEST(test_set_list_op_pending)
 	ret = pthread_barrier_init(&barrier, NULL, 2);
 	ASSERT_EQ(ret, 0);
 
-	ret = create_child(_metadata, &child_fn_lock_with_error, &lock);
+	ret = create_child(&child_fn_lock_with_error, &lock);
 	ASSERT_NE(ret, -1);
 
 	pthread_barrier_wait(&barrier);
@@ -439,20 +414,20 @@ TEST(test_set_list_op_pending)
 	wait(&wstatus);
 	pthread_barrier_destroy(&barrier);
 
-	EXPECT_EQ(WEXITSTATUS(wstatus), 0)
-		TH_LOG("child failed");
+	/* Pass only if the child hasn't return error */
+	if (!WEXITSTATUS(wstatus))
+		ksft_test_result_pass("%s\n", __func__);
+	else
+		ksft_test_result_fail("%s\n", __func__);
 }
 
 #define CHILD_NR 10
 
 static int child_lock_holder(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct lock_struct *locks = cargs->arg;
+	struct lock_struct *locks = arg;
 	struct robust_list_head head;
 	int i;
-
-	free(cargs);
 
 	set_list(&head);
 
@@ -472,21 +447,22 @@ static int child_lock_holder(void *arg)
 
 static int child_wait_lock(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct __test_metadata *_metadata = cargs->_metadata;
-	struct lock_struct *lock = cargs->arg;
+	struct lock_struct *lock = arg;
 	struct robust_list_head head;
 	int ret;
 
-	free(cargs);
-
 	pthread_barrier_wait(&barrier2);
 	ret = mutex_lock(lock, &head, false);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("mutex_lock error");
 
-	ASSERT_TRUE(lock->futex & FUTEX_OWNER_DIED)
-		TH_LOG("futex not marked with FUTEX_OWNER_DIED");
+	if (ret) {
+		ksft_test_result_fail("mutex_lock error\n");
+		return -1;
+	}
+
+	if (!(lock->futex & FUTEX_OWNER_DIED)) {
+		ksft_test_result_fail("futex not marked with FUTEX_OWNER_DIED\n");
+		return -1;
+	}
 
 	return 0;
 }
@@ -506,20 +482,18 @@ TEST(test_robust_list_multiple_elements)
 	ret = pthread_barrier_init(&barrier2, NULL, CHILD_NR + 1);
 	ASSERT_EQ(ret, 0);
 
-	pids[0] = create_child(_metadata, &child_lock_holder, &locks);
-	ASSERT_NE(pids[0], -1);
+	pids[0] = create_child(&child_lock_holder, &locks);
 
 	/* Wait until the locker thread takes the look */
 	pthread_barrier_wait(&barrier);
 
-	for (i = 0; i < CHILD_NR; i++) {
-		pids[i+1] = create_child(_metadata, &child_wait_lock, &locks[i]);
-		ASSERT_NE(pids[i+1], -1);
-	}
+	for (i = 0; i < CHILD_NR; i++)
+		pids[i+1] = create_child(&child_wait_lock, &locks[i]);
 
-	/* Wait for all children to return (holder + all waiters) */
+	/* Wait for all children to return */
 	ret = 0;
-	for (i = 0; i < CHILD_NR + 1; i++) {
+
+	for (i = 0; i < CHILD_NR; i++) {
 		waitpid(pids[i], &wstatus, 0);
 		if (WEXITSTATUS(wstatus))
 			ret = -1;
@@ -528,23 +502,22 @@ TEST(test_robust_list_multiple_elements)
 	pthread_barrier_destroy(&barrier);
 	pthread_barrier_destroy(&barrier2);
 
-	EXPECT_EQ(ret, 0)
-		TH_LOG("One or more children failed");
+	/* Pass only if the child hasn't return error */
+	if (!ret)
+		ksft_test_result_pass("%s\n", __func__);
 }
 
 static int child_circular_list(void *arg)
 {
-	struct child_args *cargs = arg;
-	struct __test_metadata *_metadata = cargs->_metadata;
-	static struct lock_struct a, b, c;
-	struct robust_list_head head;
+	static struct robust_list_head head;
+	struct lock_struct a, b, c;
 	int ret;
 
-	free(cargs);
-
 	ret = set_list(&head);
-	ASSERT_EQ(ret, 0)
-		TH_LOG("set_list error");
+	if (ret) {
+		ksft_test_result_fail("set_list error\n");
+		return -1;
+	}
 
 	head.list.next = &a.list;
 
@@ -566,241 +539,14 @@ static int child_circular_list(void *arg)
 TEST(test_circular_list)
 {
 	int wstatus;
-	pid_t pid;
 
-	pid = create_child(_metadata, child_circular_list, NULL);
-	ASSERT_NE(pid, -1);
+	create_child(child_circular_list, NULL);
 
 	wait(&wstatus);
 
-	EXPECT_EQ(WEXITSTATUS(wstatus), 0)
-		TH_LOG("child failed");
-}
-
-/*
- * Below are tests for the fix of robust release race condition. Please read the following
- * thread to learn more about the issue in the first place and why the following functions fix it:
- * https://lore.kernel.org/lkml/20260316162316.356674433@kernel.org/
- */
-
-/*
- * Auxiliary code for binding the vDSO functions
- */
-static void *get_vdso_func_addr(const char *function)
-{
-	const char *vdso_names[] = {
-		"linux-vdso.so.1", "linux-gate.so.1", "linux-vdso32.so.1", "linux-vdso64.so.1",
-	};
-
-	for (int i = 0; i < ARRAY_SIZE(vdso_names); i++) {
-		void *vdso = dlopen(vdso_names[i], RTLD_LAZY | RTLD_LOCAL | RTLD_NOLOAD);
-
-		if (vdso)
-			return dlsym(vdso, function);
-	}
-	return NULL;
-}
-
-/*
- * These are the real vDSO function signatures:
- *
- *	__vdso_futex_robust_list64_try_unlock(__u32 *lock, __u32 tid, __u64 *pop)
- *	__vdso_futex_robust_list32_try_unlock(__u32 *lock, __u32 tid, __u32 *pop)
- *
- * So for the generic entry point we need to use a void pointer as the last argument
- */
-FIXTURE(vdso_unlock)
-{
-	uint32_t (*vdso)(_Atomic(uint32_t) *lock, uint32_t tid, void *pop);
-};
-
-FIXTURE_VARIANT(vdso_unlock)
-{
-	bool is_32;
-	char func_name[];
-};
-
-FIXTURE_SETUP(vdso_unlock)
-{
-	self->vdso = get_vdso_func_addr(variant->func_name);
-}
-
-FIXTURE_TEARDOWN(vdso_unlock) {}
-
-FIXTURE_VARIANT_ADD(vdso_unlock, 32)
-{
-	.func_name = "__vdso_futex_robust_list32_try_unlock",
-	.is_32 = true,
-};
-
-FIXTURE_VARIANT_ADD(vdso_unlock, 64)
-{
-	.func_name = "__vdso_futex_robust_list64_try_unlock",
-	.is_32 = false,
-};
-
-/*
- * Test the vDSO robust_listXX_try_unlock() for the uncontended case. The virtual syscall should
- * return the thread ID of the lock owner, the lock word must be 0 and the list_op_pending should
- * be NULL.
- */
-TEST_F(vdso_unlock, test_robust_try_unlock_uncontended)
-{
-	struct lock_struct lock = { .futex = 0 };
-	_Atomic(unsigned int) *futex = &lock.futex;
-	struct robust_list_head head;
-	uintptr_t exp = (uintptr_t) NULL;
-	pid_t tid = gettid();
-	int ret;
-
-	if (!self->vdso) {
-		ksft_test_result_skip("%s not found\n", variant->func_name);
-		return;
-	}
-
-	*futex = tid;
-
-	ret = set_list(&head);
-	if (ret)
-		ksft_test_result_fail("set_robust_list error\n");
-
-	head.list_op_pending = &lock.list;
-
-	ret = self->vdso(futex, tid, &head.list_op_pending);
-
-	ASSERT_EQ(ret, tid);
-	ASSERT_EQ(*futex, 0);
-
-	/* Check only the lower 32 bits for the 32-bit entry point */
-	if (variant->is_32) {
-		exp = (uintptr_t)(unsigned long)&lock.list;
-		exp &= ~0xFFFFFFFFULL;
-	}
-
-	ASSERT_EQ((uintptr_t)(unsigned long)head.list_op_pending, exp);
-}
-
-/*
- * If the lock is contended, the operation fails. The return value is the value found at the
- * futex word (tid | FUTEX_WAITERS), the futex word is not modified and the list_op_pending is_32
- * not cleared.
- */
-TEST_F(vdso_unlock, test_robust_try_unlock_contended)
-{
-	struct lock_struct lock = { .futex = 0 };
-	_Atomic(unsigned int) *futex = &lock.futex;
-	struct robust_list_head head;
-	pid_t tid = gettid();
-	int ret;
-
-	if (!self->vdso) {
-		ksft_test_result_skip("%s not found\n", variant->func_name);
-		return;
-	}
-
-	*futex = tid | FUTEX_WAITERS;
-
-	ret = set_list(&head);
-	if (ret)
-		ksft_test_result_fail("set_robust_list error\n");
-
-	head.list_op_pending = &lock.list;
-
-	ret = self->vdso(futex, tid, &head.list_op_pending);
-
-	ASSERT_EQ(ret, tid | FUTEX_WAITERS);
-	ASSERT_EQ(*futex, tid | FUTEX_WAITERS);
-	ASSERT_EQ(head.list_op_pending, &lock.list);
-}
-
-FIXTURE(futex_op) {};
-
-FIXTURE_VARIANT(futex_op)
-{
-	unsigned int op;
-	unsigned int val3;
-};
-
-FIXTURE_SETUP(futex_op) {}
-
-FIXTURE_TEARDOWN(futex_op) {}
-
-FIXTURE_VARIANT_ADD(futex_op, wake)
-{
-	.op = FUTEX_WAKE,
-	.val3 = 0,
-};
-
-FIXTURE_VARIANT_ADD(futex_op, wake_bitset)
-{
-	.op = FUTEX_WAKE_BITSET,
-	.val3 = FUTEX_BITSET_MATCH_ANY,
-};
-
-FIXTURE_VARIANT_ADD(futex_op, unlock_pi)
-{
-	.op = FUTEX_UNLOCK_PI,
-	.val3 = 0,
-};
-
-FIXTURE_VARIANT_ADD(futex_op, wake32)
-{
-	.op = FUTEX_WAKE | FUTEX_ROBUST_LIST32,
-	.val3 = 0,
-};
-
-FIXTURE_VARIANT_ADD(futex_op, wake_bitset32)
-{
-	.op = FUTEX_WAKE_BITSET | FUTEX_ROBUST_LIST32,
-	.val3 = FUTEX_BITSET_MATCH_ANY,
-};
-
-FIXTURE_VARIANT_ADD(futex_op, unlock_pi32)
-{
-	.op = FUTEX_UNLOCK_PI | FUTEX_ROBUST_LIST32,
-	.val3 = 0,
-};
-
-/*
- * The syscall should return the number of tasks waken (for this test, 0), clear the futex word and
- * clear list_op_pending
- */
-TEST_F(futex_op, test_futex_robust_unlock)
-{
-	struct lock_struct lock = { .futex = 0 };
-	_Atomic(unsigned int) *futex = &lock.futex;
-	uintptr_t exp = (uintptr_t) NULL;
-	struct robust_list_head head;
-	pid_t tid = gettid();
-	int ret;
-
-#ifndef BUILD_64
-	if (!(variant->op & FUTEX_ROBUST_LIST32)) {
-		ksft_test_result_skip("Not supported for 32 bit build\n");
-		return;
-	}
-#endif
-
-	*futex = tid | FUTEX_WAITERS;
-
-	ret = set_list(&head);
-	if (ret)
-		ksft_test_result_fail("set_robust_list error\n");
-
-	head.list_op_pending = &lock.list;
-
-	ret = sys_futex_robust_unlock(futex, FUTEX_ROBUST_UNLOCK | variant->op, tid,
-				      &head.list_op_pending, variant->val3);
-
-	ASSERT_EQ(ret, 0);
-	ASSERT_EQ(*futex, 0);
-
-	if (variant->op & FUTEX_ROBUST_LIST32) {
-		exp = (uint64_t)(unsigned long)&lock.list;
-		exp &= ~0xFFFFFFFFULL;
-	}
-
-	ASSERT_EQ((uintptr_t)(unsigned long)head.list_op_pending, exp);
+	/* Pass only if the child hasn't return error */
+	if (!WEXITSTATUS(wstatus))
+		ksft_test_result_pass("%s\n", __func__);
 }
 
 TEST_HARNESS_MAIN

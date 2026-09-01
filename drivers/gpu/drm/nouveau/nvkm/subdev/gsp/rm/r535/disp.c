@@ -625,10 +625,14 @@ r535_head_vblank_get(struct nvkm_head *head)
 	nvkm_mask(device, 0x611d80 + (head->id * 4), 0x00000002, 0x00000002);
 }
 
+static void
+r535_head_state(struct nvkm_head *head, struct nvkm_head_state *state)
+{
+}
+
 static const struct nvkm_head_func
 r535_head = {
-	.state = gv100_head_state,
-	.rgpos = gv100_head_rgpos,
+	.state = r535_head_state,
 	.vblank_get = r535_head_vblank_get,
 	.vblank_put = r535_head_vblank_put,
 };
@@ -1730,8 +1734,7 @@ r535_disp_new(const struct nvkm_disp_func *hw, struct nvkm_device *device,
 	struct nvkm_disp_func *rm;
 	int ret;
 
-	rm = kzalloc_flex(*rm, user, 6);
-	if (!rm)
+	if (!(rm = kzalloc(sizeof(*rm) + 6 * sizeof(rm->user[0]), GFP_KERNEL)))
 		return -ENOMEM;
 
 	rm->dtor = r535_disp_dtor;

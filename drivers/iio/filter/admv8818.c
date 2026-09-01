@@ -11,6 +11,7 @@
 #include <linux/device.h>
 #include <linux/iio/iio.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/notifier.h>
 #include <linux/property.h>
@@ -789,7 +790,7 @@ static int admv8818_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id admv8818_id[] = {
-	{ .name = "admv8818" },
+	{ "admv8818", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, admv8818_id);

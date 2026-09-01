@@ -2,23 +2,16 @@
 
 mod continuation;
 
-use core::{
-    mem,
-    sync::atomic::{
-        fence,
-        Ordering, //
-    },
-};
+use core::mem;
 
 use kernel::{
     device,
     dma::{
         Coherent,
-        CoherentBox,
         DmaAddress, //
     },
+    dma_write,
     io::{
-        io_project,
         poll::read_poll_timeout,
         Io, //
     },
@@ -58,10 +51,9 @@ use crate::{
         GSP_PAGE_SIZE, //
     },
     num,
+    regs,
     sbuffer::SBufferIter, //
 };
-
-use super::regs;
 
 /// Marker type representing the absence of a reply for a command. Commands using this as their
 /// reply type are sent using [`Cmdq::send_command_no_wait`].
@@ -179,18 +171,20 @@ static_assert!(align_of::<MsgqData>() == GSP_PAGE_SIZE);
 #[repr(C)]
 // There is no struct defined for this in the open-gpu-kernel-source headers.
 // Instead it is defined by code in `GspMsgQueuesInit()`.
-struct Msgq {
+// TODO: Revert to private once `IoView` projections replace the `gsp_mem` module.
+pub(super) struct Msgq {
     /// Header for sending messages, including the write pointer.
-    tx: MsgqTxHeader,
+    pub(super) tx: MsgqTxHeader,
     /// Header for receiving messages, including the read pointer.
-    rx: MsgqRxHeader,
+    pub(super) rx: MsgqRxHeader,
     /// The message queue proper.
     msgq: MsgqData,
 }
 
 /// Structure shared between the driver and the GSP and containing the command and message queues.
 #[repr(C)]
-struct GspMem {
+// TODO: Revert to private once `IoView` projections replace the `gsp_mem` module.
+pub(super) struct GspMem {
     /// Self-mapping page table entries.
     ptes: PteArray<{ Self::PTE_ARRAY_SIZE }>,
     /// CPU queue: the driver writes commands here, and the GSP reads them. It also contains the
@@ -198,13 +192,13 @@ struct GspMem {
     /// index into the GSP queue.
     ///
     /// This member is read-only for the GSP.
-    cpuq: Msgq,
+    pub(super) cpuq: Msgq,
     /// GSP queue: the GSP writes messages here, and the driver reads them. It also contains the
     /// write and read pointers that the GSP updates. This means that the read pointer here is an
     /// index into the CPU queue.
     ///
     /// This member is read-only for the driver.
-    gspq: Msgq,
+    pub(super) gspq: Msgq,
 }
 
 impl GspMem {
@@ -238,12 +232,20 @@ impl DmaGspMem {
         const MSGQ_SIZE: u32 = num::usize_into_u32::<{ size_of::<Msgq>() }>();
         const RX_HDR_OFF: u32 = num::usize_into_u32::<{ mem::offset_of!(Msgq, rx) }>();
 
-        let mut gsp_mem = CoherentBox::<GspMem>::zeroed(dev, GFP_KERNEL)?;
-        gsp_mem.cpuq.tx = MsgqTxHeader::new(MSGQ_SIZE, RX_HDR_OFF, MSGQ_NUM_PAGES);
-        gsp_mem.cpuq.rx = MsgqRxHeader::new();
+        let gsp_mem = Coherent::<GspMem>::zeroed(dev, GFP_KERNEL)?;
 
-        let gsp_mem: Coherent<_> = gsp_mem.into();
-        PteArray::init(io_project!(gsp_mem, .ptes), gsp_mem.dma_address())?;
+        let start = gsp_mem.dma_handle();
+        // Write values one by one to avoid an on-stack instance of `PteArray`.
+        for i in 0..GspMem::PTE_ARRAY_SIZE {
+            dma_write!(gsp_mem, .ptes.0[i], PteArray::<0>::entry(start, i)?);
+        }
+
+        dma_write!(
+            gsp_mem,
+            .cpuq.tx,
+            MsgqTxHeader::new(MSGQ_SIZE, RX_HDR_OFF, MSGQ_NUM_PAGES)
+        );
+        dma_write!(gsp_mem, .cpuq.rx, MsgqRxHeader::new());
 
         Ok(Self(gsp_mem))
     }
@@ -258,7 +260,7 @@ impl DmaGspMem {
         let rx = self.gsp_read_ptr();
 
         // Pointer to the first entry of the CPU message queue.
-        let data = ptr::project!(mut self.0.as_mut_ptr(), .cpuq.msgq.data[build: 0]);
+        let data = ptr::project!(mut self.0.as_mut_ptr(), .cpuq.msgq.data[0]);
 
         let (tail_end, wrap_end) = if rx == 0 {
             // The write area is non-wrapping, and stops at the second-to-last entry of the command
@@ -320,7 +322,7 @@ impl DmaGspMem {
         let rx = self.cpu_read_ptr();
 
         // Pointer to the first entry of the GSP message queue.
-        let data = ptr::project!(self.0.as_ptr(), .gspq.msgq.data[build: 0]);
+        let data = ptr::project!(self.0.as_ptr(), .gspq.msgq.data[0]);
 
         let (tail_end, wrap_end) = if rx <= tx {
             // Read area is non-wrapping and stops right before `tx`.
@@ -404,7 +406,7 @@ impl DmaGspMem {
     //
     // - The returned value is within `0..MSGQ_NUM_PAGES`.
     fn gsp_write_ptr(&self) -> u32 {
-        MsgqTxHeader::write_ptr(io_project!(self.0, .gspq.tx)) % MSGQ_NUM_PAGES
+        super::fw::gsp_mem::gsp_write_ptr(&self.0)
     }
 
     // Returns the index of the memory page the GSP will read the next command from.
@@ -413,7 +415,7 @@ impl DmaGspMem {
     //
     // - The returned value is within `0..MSGQ_NUM_PAGES`.
     fn gsp_read_ptr(&self) -> u32 {
-        MsgqRxHeader::read_ptr(io_project!(self.0, .gspq.rx)) % MSGQ_NUM_PAGES
+        super::fw::gsp_mem::gsp_read_ptr(&self.0)
     }
 
     // Returns the index of the memory page the CPU can read the next message from.
@@ -422,18 +424,12 @@ impl DmaGspMem {
     //
     // - The returned value is within `0..MSGQ_NUM_PAGES`.
     fn cpu_read_ptr(&self) -> u32 {
-        MsgqRxHeader::read_ptr(io_project!(self.0, .cpuq.rx)) % MSGQ_NUM_PAGES
+        super::fw::gsp_mem::cpu_read_ptr(&self.0)
     }
 
     // Informs the GSP that it can send `elem_count` new pages into the message queue.
     fn advance_cpu_read_ptr(&mut self, elem_count: u32) {
-        let rx = io_project!(self.0, .cpuq.rx);
-        let rptr = MsgqRxHeader::read_ptr(rx).wrapping_add(elem_count) % MSGQ_NUM_PAGES;
-
-        // Ensure read pointer is properly ordered.
-        fence(Ordering::SeqCst);
-
-        MsgqRxHeader::set_read_ptr(rx, rptr)
+        super::fw::gsp_mem::advance_cpu_read_ptr(&self.0, elem_count)
     }
 
     // Returns the index of the memory page the CPU can write the next command to.
@@ -442,17 +438,12 @@ impl DmaGspMem {
     //
     // - The returned value is within `0..MSGQ_NUM_PAGES`.
     fn cpu_write_ptr(&self) -> u32 {
-        MsgqTxHeader::write_ptr(io_project!(self.0, .cpuq.tx)) % MSGQ_NUM_PAGES
+        super::fw::gsp_mem::cpu_write_ptr(&self.0)
     }
 
     // Informs the GSP that it can process `elem_count` new pages from the command queue.
     fn advance_cpu_write_ptr(&mut self, elem_count: u32) {
-        let tx = io_project!(self.0, .cpuq.tx);
-        let wptr = MsgqTxHeader::write_ptr(tx).wrapping_add(elem_count) % MSGQ_NUM_PAGES;
-        MsgqTxHeader::set_write_ptr(tx, wptr);
-
-        // Ensure all command data is visible before triggering the GSP read.
-        fence(Ordering::SeqCst);
+        super::fw::gsp_mem::advance_cpu_write_ptr(&self.0, elem_count)
     }
 }
 
@@ -487,8 +478,8 @@ pub(crate) struct Cmdq {
     /// Inner mutex-protected state.
     #[pin]
     inner: Mutex<CmdqInner>,
-    /// DMA address of the command queue's shared memory region.
-    pub(super) dma_addr: DmaAddress,
+    /// DMA handle of the command queue's shared memory region.
+    pub(super) dma_handle: DmaAddress,
 }
 
 impl Cmdq {
@@ -517,7 +508,7 @@ impl Cmdq {
             let gsp_mem = DmaGspMem::new(dev)?;
 
             Ok(try_pin_init!(Self {
-                dma_addr: gsp_mem.0.dma_address(),
+                dma_handle: gsp_mem.0.dma_handle(),
                 inner <- new_mutex!(CmdqInner {
                     dev: dev.into(),
                     gsp_mem,
@@ -541,7 +532,7 @@ impl Cmdq {
     }
 
     /// Notifies the GSP that we have updated the command queue pointers.
-    fn notify_gsp(bar: Bar0<'_>) {
+    fn notify_gsp(bar: &Bar0) {
         bar.write_reg(regs::NV_PGSP_QUEUE_HEAD::zeroed().with_address(0u32));
     }
 
@@ -561,7 +552,7 @@ impl Cmdq {
     ///   written to by its [`CommandToGsp::init_variable_payload`] method.
     ///
     /// Error codes returned by the command and reply initializers are propagated as-is.
-    pub(crate) fn send_command<M>(&self, bar: Bar0<'_>, command: M) -> Result<M::Reply>
+    pub(crate) fn send_command<M>(&self, bar: &Bar0, command: M) -> Result<M::Reply>
     where
         M: CommandToGsp,
         M::Reply: MessageFromGsp,
@@ -589,7 +580,7 @@ impl Cmdq {
     ///   written to by its [`CommandToGsp::init_variable_payload`] method.
     ///
     /// Error codes returned by the command initializers are propagated as-is.
-    pub(crate) fn send_command_no_wait<M>(&self, bar: Bar0<'_>, command: M) -> Result
+    pub(crate) fn send_command_no_wait<M>(&self, bar: &Bar0, command: M) -> Result
     where
         M: CommandToGsp<Reply = NoReply>,
         Error: From<M::InitError>,
@@ -633,7 +624,7 @@ impl CmdqInner {
     ///   written to by its [`CommandToGsp::init_variable_payload`] method.
     ///
     /// Error codes returned by the command initializers are propagated as-is.
-    fn send_single_command<M>(&mut self, bar: Bar0<'_>, command: M) -> Result
+    fn send_single_command<M>(&mut self, bar: &Bar0, command: M) -> Result
     where
         M: CommandToGsp,
         // This allows all error types, including `Infallible`, to be used for `M::InitError`.
@@ -654,8 +645,8 @@ impl CmdqInner {
         // SAFETY: `msg_header` and `cmd` are valid references, and not touched if the initializer
         // fails.
         unsafe {
-            pin_init::raw_try_init(core::ptr::from_mut(dst.header), msg_element)?;
-            pin_init::raw_try_init(core::ptr::from_mut(cmd), command.init())?;
+            msg_element.__init(core::ptr::from_mut(dst.header))?;
+            command.init().__init(core::ptr::from_mut(cmd))?;
         }
 
         // Fill the variable-length payload, which may be empty.
@@ -703,7 +694,7 @@ impl CmdqInner {
     ///   written to by its [`CommandToGsp::init_variable_payload`] method.
     ///
     /// Error codes returned by the command initializers are propagated as-is.
-    fn send_command<M>(&mut self, bar: Bar0<'_>, command: M) -> Result
+    fn send_command<M>(&mut self, bar: &Bar0, command: M) -> Result
     where
         M: CommandToGsp,
         Error: From<M::InitError>,

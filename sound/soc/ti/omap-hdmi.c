@@ -24,6 +24,8 @@
 #define DRV_NAME "omap-hdmi-audio"
 
 struct hdmi_audio_data {
+	struct snd_soc_card *card;
+
 	const struct omap_hdmi_audio_ops *ops;
 	struct device *dssdev;
 	struct snd_dmaengine_dai_dma_data dma_data;
@@ -47,7 +49,7 @@ static void hdmi_dai_abort(struct device *dev)
 {
 	struct hdmi_audio_data *ad = dev_get_drvdata(dev);
 
-	guard(mutex)(&ad->current_stream_lock);
+	mutex_lock(&ad->current_stream_lock);
 	if (ad->current_stream && ad->current_stream->runtime &&
 	    snd_pcm_running(ad->current_stream)) {
 		dev_err(dev, "HDMI display disabled, aborting playback\n");
@@ -55,6 +57,7 @@ static void hdmi_dai_abort(struct device *dev)
 		snd_pcm_stop(ad->current_stream, SNDRV_PCM_STATE_DISCONNECTED);
 		snd_pcm_stream_unlock_irq(ad->current_stream);
 	}
+	mutex_unlock(&ad->current_stream_lock);
 }
 
 static int hdmi_dai_startup(struct snd_pcm_substream *substream,
@@ -83,14 +86,16 @@ static int hdmi_dai_startup(struct snd_pcm_substream *substream,
 
 	snd_soc_dai_set_dma_data(dai, substream, &ad->dma_data);
 
-	scoped_guard(mutex, &ad->current_stream_lock)
-		ad->current_stream = substream;
+	mutex_lock(&ad->current_stream_lock);
+	ad->current_stream = substream;
+	mutex_unlock(&ad->current_stream_lock);
 
 	ret = ad->ops->audio_startup(ad->dssdev, hdmi_dai_abort);
 
 	if (ret) {
-		scoped_guard(mutex, &ad->current_stream_lock)
-			ad->current_stream = NULL;
+		mutex_lock(&ad->current_stream_lock);
+		ad->current_stream = NULL;
+		mutex_unlock(&ad->current_stream_lock);
 	}
 
 	return ret;
@@ -256,8 +261,9 @@ static void hdmi_dai_shutdown(struct snd_pcm_substream *substream,
 
 	ad->ops->audio_shutdown(ad->dssdev);
 
-	scoped_guard(mutex, &ad->current_stream_lock)
-		ad->current_stream = NULL;
+	mutex_lock(&ad->current_stream_lock);
+	ad->current_stream = NULL;
+	mutex_unlock(&ad->current_stream_lock);
 }
 
 static const struct snd_soc_dai_ops hdmi_dai_ops = {
@@ -373,9 +379,12 @@ static int omap_hdmi_audio_probe(struct platform_device *pdev)
 	card->dev = dev;
 
 	ret = devm_snd_soc_register_card(dev, card);
-	if (ret)
-		return dev_err_probe(dev, ret, "snd_soc_register_card() failed\n");
+	if (ret) {
+		dev_err(dev, "snd_soc_register_card failed (%d)\n", ret);
+		return ret;
+	}
 
+	ad->card = card;
 	snd_soc_card_set_drvdata(card, ad);
 
 	dev_set_drvdata(dev, ad);

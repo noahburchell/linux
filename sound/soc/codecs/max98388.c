@@ -6,6 +6,7 @@
 #include <linux/gpio/consumer.h>
 #include <linux/i2c.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/of.h>
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
@@ -863,16 +864,10 @@ static int max98388_suspend(struct device *dev)
 static int max98388_resume(struct device *dev)
 {
 	struct max98388_priv *max98388 = dev_get_drvdata(dev);
-	int ret;
 
 	regcache_cache_only(max98388->regmap, false);
 	max98388_reset(max98388, dev);
-	ret = regcache_sync(max98388->regmap);
-	if (ret) {
-		regcache_cache_only(max98388->regmap, true);
-		regcache_mark_dirty(max98388->regmap);
-		return ret;
-	}
+	regcache_sync(max98388->regmap);
 
 	return 0;
 }
@@ -982,8 +977,8 @@ static int max98388_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id max98388_i2c_id[] = {
-	{ .name = "max98388" },
-	{ }
+	{ "max98388"},
+	{ },
 };
 
 MODULE_DEVICE_TABLE(i2c, max98388_i2c_id);

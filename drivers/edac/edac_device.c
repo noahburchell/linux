@@ -342,10 +342,14 @@ static void edac_device_workq_teardown(struct edac_device_ctl_info *edac_dev)
 }
 
 /*
- * Stop any outstanding workq queued up at this time because sleep time will
- * be reset. Then restart the workq on the new delay.
+ * edac_device_reset_delay_period
+ *
+ *	need to stop any outstanding workq queued up at this time
+ *	because we will be resetting the sleep time.
+ *	Then restart the workq on the new delay
  */
-void edac_device_reset_delay_period(struct edac_device_ctl_info *edac_dev, unsigned int msec)
+void edac_device_reset_delay_period(struct edac_device_ctl_info *edac_dev,
+				    unsigned long msec)
 {
 	edac_dev->poll_msec = msec;
 	edac_dev->delay	    = msecs_to_jiffies(msec);

@@ -12,6 +12,7 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
+#define APSS_CPUCP_IPC_CHAN_SUPPORTED		3
 #define APSS_CPUCP_MBOX_CMD_OFF			0x4
 
 /* Tx Registers */
@@ -26,14 +27,6 @@
 #define APSS_CPUCP_RX_MBOX_CMD_MASK		GENMASK_ULL(63, 0)
 
 /**
- * struct qcom_cpucp_mbox_data - Per-hardware mailbox configuration data
- * @num_chans:			Number of IPC channels supported by this hardware
- */
-struct qcom_cpucp_mbox_data {
-	int num_chans;
-};
-
-/**
  * struct qcom_cpucp_mbox - Holder for the mailbox driver
  * @chans:			The mailbox channel
  * @mbox:			The mailbox controller
@@ -41,7 +34,7 @@ struct qcom_cpucp_mbox_data {
  * @rx_base:			Base address of the CPUCP rx registers
  */
 struct qcom_cpucp_mbox {
-	struct mbox_chan *chans;
+	struct mbox_chan chans[APSS_CPUCP_IPC_CHAN_SUPPORTED];
 	struct mbox_controller mbox;
 	void __iomem *tx_base;
 	void __iomem *rx_base;
@@ -60,28 +53,17 @@ static irqreturn_t qcom_cpucp_mbox_irq_fn(int irq, void *data)
 
 	status = readq(cpucp->rx_base + APSS_CPUCP_RX_MBOX_STAT);
 
-	for_each_set_bit(i, (unsigned long *)&status, cpucp->mbox.num_chans) {
+	for_each_set_bit(i, (unsigned long *)&status, APSS_CPUCP_IPC_CHAN_SUPPORTED) {
 		u32 val = readl(cpucp->rx_base + APSS_CPUCP_RX_MBOX_CMD(i) + APSS_CPUCP_MBOX_CMD_OFF);
 		struct mbox_chan *chan = &cpucp->chans[i];
-		struct mbox_client *cl;
 		unsigned long flags;
 
-		/*
-		 * Provide mutual exclusion with changes to chan->cl.
-		 * Save cl locally and clear the HW interrupt inside the lock,
-		 * then invoke mbox_chan_received_data() outside the lock to
-		 * avoid a PREEMPT_RT self-deadlock: mbox_chan_received_data()
-		 * can call back into mbox_send_message() via scmi_rx_callback()
-		 * -> mailbox_clear_channel(), which re-acquires chan->lock
-		 * (converted to an rt_spinlock under PREEMPT_RT).
-		 */
+		/* Provide mutual exclusion with changes to chan->cl */
 		spin_lock_irqsave(&chan->lock, flags);
-		cl = chan->cl;
+		if (chan->cl)
+			mbox_chan_received_data(chan, &val);
 		writeq(BIT(i), cpucp->rx_base + APSS_CPUCP_RX_MBOX_CLEAR);
 		spin_unlock_irqrestore(&chan->lock, flags);
-
-		if (cl)
-			mbox_chan_received_data(chan, &val);
 	}
 
 	return IRQ_HANDLED;
@@ -117,14 +99,6 @@ static int qcom_cpucp_mbox_send_data(struct mbox_chan *chan, void *data)
 	unsigned long chan_id = channel_number(chan);
 	u32 *val = data;
 
-	/*
-	 * mailbox_clear_channel() calls mbox_send_message() with NULL data to
-	 * signal the remote side that the channel has been cleared.  Nothing
-	 * needs to be written to the TX register in that case, so just return.
-	 */
-	if (!val)
-		return 0;
-
 	writel(*val, cpucp->tx_base + APSS_CPUCP_TX_MBOX_CMD(chan_id) + APSS_CPUCP_MBOX_CMD_OFF);
 
 	return 0;
@@ -138,22 +112,13 @@ static const struct mbox_chan_ops qcom_cpucp_mbox_chan_ops = {
 
 static int qcom_cpucp_mbox_probe(struct platform_device *pdev)
 {
-	const struct qcom_cpucp_mbox_data *data;
 	struct device *dev = &pdev->dev;
 	struct qcom_cpucp_mbox *cpucp;
 	struct mbox_controller *mbox;
 	int irq, ret;
 
-	data = of_device_get_match_data(dev);
-	if (!data)
-		return dev_err_probe(dev, -EINVAL, "No match data found\n");
-
 	cpucp = devm_kzalloc(dev, sizeof(*cpucp), GFP_KERNEL);
 	if (!cpucp)
-		return -ENOMEM;
-
-	cpucp->chans = devm_kcalloc(dev, data->num_chans, sizeof(*cpucp->chans), GFP_KERNEL);
-	if (!cpucp->chans)
 		return -ENOMEM;
 
 	cpucp->rx_base = devm_of_iomap(dev, dev->of_node, 0, NULL);
@@ -175,13 +140,13 @@ static int qcom_cpucp_mbox_probe(struct platform_device *pdev)
 	ret = devm_request_irq(dev, irq, qcom_cpucp_mbox_irq_fn,
 			       IRQF_TRIGGER_HIGH | IRQF_NO_SUSPEND, "apss_cpucp_mbox", cpucp);
 	if (ret < 0)
-		return ret;
+		return dev_err_probe(dev, ret, "Failed to register irq: %d\n", irq);
 
 	writeq(APSS_CPUCP_RX_MBOX_CMD_MASK, cpucp->rx_base + APSS_CPUCP_RX_MBOX_MAP);
 
 	mbox = &cpucp->mbox;
 	mbox->dev = dev;
-	mbox->num_chans = data->num_chans;
+	mbox->num_chans = APSS_CPUCP_IPC_CHAN_SUPPORTED;
 	mbox->chans = cpucp->chans;
 	mbox->ops = &qcom_cpucp_mbox_chan_ops;
 
@@ -192,17 +157,8 @@ static int qcom_cpucp_mbox_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct qcom_cpucp_mbox_data qcom_x1e80100_mbox_data = {
-	.num_chans = 3,
-};
-
-static const struct qcom_cpucp_mbox_data qcom_nord_mbox_data = {
-	.num_chans = 16,
-};
-
 static const struct of_device_id qcom_cpucp_mbox_of_match[] = {
-	{ .compatible = "qcom,nord-cpucp-mbox", .data = &qcom_nord_mbox_data },
-	{ .compatible = "qcom,x1e80100-cpucp-mbox", .data = &qcom_x1e80100_mbox_data },
+	{ .compatible = "qcom,x1e80100-cpucp-mbox" },
 	{}
 };
 MODULE_DEVICE_TABLE(of, qcom_cpucp_mbox_of_match);

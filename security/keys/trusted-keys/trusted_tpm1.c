@@ -18,6 +18,7 @@
 #include <keys/trusted-type.h>
 #include <linux/key-type.h>
 #include <linux/tpm.h>
+#include <linux/tpm_command.h>
 
 #include <keys/trusted_tpm.h>
 
@@ -45,44 +46,38 @@ enum {
 	SRK_keytype = 4
 };
 
-#ifdef CONFIG_TRUSTED_KEYS_DEBUG
+#define TPM_DEBUG 0
+
+#if TPM_DEBUG
 static inline void dump_options(struct trusted_key_options *o)
 {
-	if (!trusted_debug)
-		return;
-
-	pr_debug("sealing key type %d\n", o->keytype);
-	pr_debug("sealing key handle %0X\n", o->keyhandle);
-	pr_debug("pcrlock %d\n", o->pcrlock);
-	pr_debug("pcrinfo %d\n", o->pcrinfo_len);
-	print_hex_dump_debug("pcrinfo ", DUMP_PREFIX_NONE,
-			     16, 1, o->pcrinfo, o->pcrinfo_len, 0);
+	pr_info("sealing key type %d\n", o->keytype);
+	pr_info("sealing key handle %0X\n", o->keyhandle);
+	pr_info("pcrlock %d\n", o->pcrlock);
+	pr_info("pcrinfo %d\n", o->pcrinfo_len);
+	print_hex_dump(KERN_INFO, "pcrinfo ", DUMP_PREFIX_NONE,
+		       16, 1, o->pcrinfo, o->pcrinfo_len, 0);
 }
 
 static inline void dump_sess(struct osapsess *s)
 {
-	if (!trusted_debug)
-		return;
-
-	print_hex_dump_debug("trusted-key: handle ", DUMP_PREFIX_NONE,
-			     16, 1, &s->handle, 4, 0);
-	pr_debug("secret:\n");
-	print_hex_dump_debug("", DUMP_PREFIX_NONE,
-			     16, 1, &s->secret, SHA1_DIGEST_SIZE, 0);
-	pr_debug("trusted-key: enonce:\n");
-	print_hex_dump_debug("", DUMP_PREFIX_NONE,
-			     16, 1, &s->enonce, SHA1_DIGEST_SIZE, 0);
+	print_hex_dump(KERN_INFO, "trusted-key: handle ", DUMP_PREFIX_NONE,
+		       16, 1, &s->handle, 4, 0);
+	pr_info("secret:\n");
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE,
+		       16, 1, &s->secret, SHA1_DIGEST_SIZE, 0);
+	pr_info("trusted-key: enonce:\n");
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE,
+		       16, 1, &s->enonce, SHA1_DIGEST_SIZE, 0);
 }
 
 static inline void dump_tpm_buf(unsigned char *buf)
 {
 	int len;
 
-	if (!trusted_debug)
-		return;
-	pr_debug("\ntpm buffer\n");
+	pr_info("\ntpm buffer\n");
 	len = LOAD32(buf, TPM_SIZE_OFFSET);
-	print_hex_dump_debug("", DUMP_PREFIX_NONE, 16, 1, buf, len, 0);
+	print_hex_dump(KERN_INFO, "", DUMP_PREFIX_NONE, 16, 1, buf, len, 0);
 }
 #else
 static inline void dump_options(struct trusted_key_options *o)
@@ -316,8 +311,9 @@ static int TSS_checkhmac2(unsigned char *buffer,
  * For key specific tpm requests, we will generate and send our
  * own TPM command packets using the drivers send function.
  */
-static int trusted_tpm_send(struct tpm_buf *buf)
+static int trusted_tpm_send(unsigned char *cmd, size_t buflen)
 {
+	struct tpm_buf buf;
 	int rc;
 
 	if (!chip)
@@ -327,9 +323,12 @@ static int trusted_tpm_send(struct tpm_buf *buf)
 	if (rc)
 		return rc;
 
-	dump_tpm_buf(buf->data);
-	rc = tpm_transmit_cmd(chip, buf, 4, "sending data");
-	dump_tpm_buf(buf->data);
+	buf.flags = 0;
+	buf.length = buflen;
+	buf.data = cmd;
+	dump_tpm_buf(cmd);
+	rc = tpm_transmit_cmd(chip, &buf, 4, "sending data");
+	dump_tpm_buf(cmd);
 
 	if (rc > 0)
 		/* TPM error */
@@ -375,7 +374,7 @@ static int osap(struct tpm_buf *tb, struct osapsess *s,
 	tpm_buf_append_u32(tb, handle);
 	tpm_buf_append(tb, ononce, TPM_NONCE_SIZE);
 
-	ret = trusted_tpm_send(tb);
+	ret = trusted_tpm_send(tb->data, tb->length);
 	if (ret < 0)
 		return ret;
 
@@ -399,7 +398,7 @@ static int oiap(struct tpm_buf *tb, uint32_t *handle, unsigned char *nonce)
 		return -ENODEV;
 
 	tpm_buf_reset(tb, TPM_TAG_RQU_COMMAND, TPM_ORD_OIAP);
-	ret = trusted_tpm_send(tb);
+	ret = trusted_tpm_send(tb->data, tb->length);
 	if (ret < 0)
 		return ret;
 
@@ -508,7 +507,7 @@ static int tpm_seal(struct tpm_buf *tb, uint16_t keytype,
 	tpm_buf_append_u8(tb, cont);
 	tpm_buf_append(tb, td->pubauth, SHA1_DIGEST_SIZE);
 
-	ret = trusted_tpm_send(tb);
+	ret = trusted_tpm_send(tb->data, tb->length);
 	if (ret < 0)
 		goto out;
 
@@ -599,7 +598,7 @@ static int tpm_unseal(struct tpm_buf *tb,
 	tpm_buf_append_u8(tb, cont);
 	tpm_buf_append(tb, authdata2, SHA1_DIGEST_SIZE);
 
-	ret = trusted_tpm_send(tb);
+	ret = trusted_tpm_send(tb->data, tb->length);
 	if (ret < 0) {
 		pr_info("authhmac failed (%d)\n", ret);
 		return ret;
@@ -626,23 +625,23 @@ static int tpm_unseal(struct tpm_buf *tb,
 static int key_seal(struct trusted_key_payload *p,
 		    struct trusted_key_options *o)
 {
+	struct tpm_buf tb;
 	int ret;
 
-	struct tpm_buf *tb __free(kfree) = kzalloc(TPM_BUFSIZE, GFP_KERNEL);
-	if (!tb)
-		return -ENOMEM;
-
-	tpm_buf_init(tb, TPM_BUFSIZE);
+	ret = tpm_buf_init(&tb, 0, 0);
+	if (ret)
+		return ret;
 
 	/* include migratable flag at end of sealed key */
 	p->key[p->key_len] = p->migratable;
 
-	ret = tpm_seal(tb, o->keytype, o->keyhandle, o->keyauth,
+	ret = tpm_seal(&tb, o->keytype, o->keyhandle, o->keyauth,
 		       p->key, p->key_len + 1, p->blob, &p->blob_len,
 		       o->blobauth, o->pcrinfo, o->pcrinfo_len);
 	if (ret < 0)
 		pr_info("srkseal failed (%d)\n", ret);
 
+	tpm_buf_destroy(&tb);
 	return ret;
 }
 
@@ -652,15 +651,14 @@ static int key_seal(struct trusted_key_payload *p,
 static int key_unseal(struct trusted_key_payload *p,
 		      struct trusted_key_options *o)
 {
+	struct tpm_buf tb;
 	int ret;
 
-	struct tpm_buf *tb __free(kfree) = kzalloc(TPM_BUFSIZE, GFP_KERNEL);
-	if (!tb)
-		return -ENOMEM;
+	ret = tpm_buf_init(&tb, 0, 0);
+	if (ret)
+		return ret;
 
-	tpm_buf_init(tb, TPM_BUFSIZE);
-
-	ret = tpm_unseal(tb, o->keyhandle, o->keyauth, p->blob, p->blob_len,
+	ret = tpm_unseal(&tb, o->keyhandle, o->keyauth, p->blob, p->blob_len,
 			 o->blobauth, p->key, &p->key_len);
 	if (ret < 0)
 		pr_info("srkunseal failed (%d)\n", ret);
@@ -668,6 +666,7 @@ static int key_unseal(struct trusted_key_payload *p,
 		/* pull migratable flag out of sealed key */
 		p->migratable = p->key[--p->key_len];
 
+	tpm_buf_destroy(&tb);
 	return ret;
 }
 
@@ -982,9 +981,9 @@ err_put:
 static void trusted_tpm_exit(void)
 {
 	if (chip) {
-		unregister_key_type(&key_type_trusted);
 		put_device(&chip->dev);
 		kfree(digests);
+		unregister_key_type(&key_type_trusted);
 	}
 }
 

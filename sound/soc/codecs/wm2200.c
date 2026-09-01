@@ -2461,15 +2461,7 @@ static int wm2200_runtime_resume(struct device *dev)
 	}
 
 	regcache_cache_only(wm2200->regmap, false);
-	ret = regcache_sync(wm2200->regmap);
-	if (ret) {
-		regcache_cache_only(wm2200->regmap, true);
-		regcache_mark_dirty(wm2200->regmap);
-		gpiod_set_value_cansleep(wm2200->ldo_ena, 0);
-		regulator_bulk_disable(ARRAY_SIZE(wm2200->core_supplies),
-				       wm2200->core_supplies);
-		return ret;
-	}
+	regcache_sync(wm2200->regmap);
 
 	return 0;
 }
@@ -2479,7 +2471,7 @@ static const struct dev_pm_ops wm2200_pm = {
 };
 
 static const struct i2c_device_id wm2200_i2c_id[] = {
-	{ .name = "wm2200" },
+	{ "wm2200" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, wm2200_i2c_id);

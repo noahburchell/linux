@@ -82,22 +82,25 @@ static inline xa_mark_t ici_tag_to_mark(unsigned int tag)
 
 /*
  * Allocate and initialise an xfs_inode.
- *
- * This can happen in context of already dirtied transactions, so the memory
- * allocations must not fail.
  */
 struct xfs_inode *
 xfs_inode_alloc(
 	struct xfs_mount	*mp,
 	xfs_ino_t		ino)
 {
-	gfp_t			gfp = GFP_KERNEL | __GFP_NOFAIL;
 	struct xfs_inode	*ip;
 
-	ip = alloc_inode_sb(mp->m_super, xfs_inode_cache, gfp);
-	inode_init_always_gfp(mp->m_super, VFS_I(ip), gfp);
+	/*
+	 * XXX: If this didn't occur in transactions, we could drop GFP_NOFAIL
+	 * and return NULL here on ENOMEM.
+	 */
+	ip = alloc_inode_sb(mp->m_super, xfs_inode_cache, GFP_KERNEL | __GFP_NOFAIL);
 
-	VFS_I(ip)->i_ino = ino;
+	if (inode_init_always(mp->m_super, VFS_I(ip))) {
+		kmem_cache_free(xfs_inode_cache, ip);
+		return NULL;
+	}
+
 	/* VFS doesn't initialise i_mode! */
 	VFS_I(ip)->i_mode = 0;
 	mapping_set_folio_min_order(VFS_I(ip)->i_mapping,
@@ -105,8 +108,10 @@ xfs_inode_alloc(
 
 	XFS_STATS_INC(mp, xs_inodes_active);
 	ASSERT(atomic_read(&ip->i_pincount) == 0);
+	ASSERT(ip->i_ino == 0);
 
 	/* initialise the xfs inode */
+	ip->i_ino = ino;
 	ip->i_mount = mp;
 	memset(&ip->i_imap, 0, sizeof(struct xfs_imap));
 	ip->i_cowfp = NULL;
@@ -188,7 +193,7 @@ xfs_inode_free(
 	 */
 	spin_lock(&ip->i_flags_lock);
 	ip->i_flags = XFS_IRECLAIM;
-	VFS_I(ip)->i_ino = 0;
+	ip->i_ino = 0;
 	spin_unlock(&ip->i_flags_lock);
 
 	__xfs_inode_free(ip);
@@ -324,7 +329,6 @@ xfs_reinit_inode(
 	struct inode		*inode)
 {
 	int			error;
-	u64			ino = inode->i_ino;
 	uint32_t		nlink = inode->i_nlink;
 	uint32_t		generation = inode->i_generation;
 	uint64_t		version = inode_peek_iversion(inode);
@@ -336,7 +340,6 @@ xfs_reinit_inode(
 
 	error = inode_init_always(mp->m_super, inode);
 
-	inode->i_ino = ino;
 	set_nlink(inode, nlink);
 	inode->i_generation = generation;
 	inode_set_iversion_queried(inode, version);
@@ -394,7 +397,7 @@ xfs_iget_recycle(
 	 */
 	ip->i_flags &= ~XFS_IRECLAIM_RESET_FLAGS;
 	ip->i_flags |= XFS_INEW;
-	xfs_perag_clear_inode_tag(pag, XFS_INODE_TO_AGINO(ip),
+	xfs_perag_clear_inode_tag(pag, XFS_INO_TO_AGINO(mp, ip->i_ino),
 			XFS_ICI_RECLAIM_TAG);
 	inode_state_assign_raw(inode, I_NEW);
 	spin_unlock(&ip->i_flags_lock);
@@ -423,8 +426,9 @@ xfs_iget_check_free_state(
 		if (VFS_I(ip)->i_mode != 0) {
 			xfs_warn(ip->i_mount,
 "Corruption detected! Free inode 0x%llx not marked free! (mode 0x%x)",
-				I_INO(ip), VFS_I(ip)->i_mode);
-			xfs_agno_mark_sick(ip->i_mount, XFS_INODE_TO_AGNO(ip),
+				ip->i_ino, VFS_I(ip)->i_mode);
+			xfs_agno_mark_sick(ip->i_mount,
+					XFS_INO_TO_AGNO(ip->i_mount, ip->i_ino),
 					XFS_SICK_AG_INOBT);
 			return -EFSCORRUPTED;
 		}
@@ -432,8 +436,9 @@ xfs_iget_check_free_state(
 		if (ip->i_nblocks != 0) {
 			xfs_warn(ip->i_mount,
 "Corruption detected! Free inode 0x%llx has blocks allocated!",
-				I_INO(ip));
-			xfs_agno_mark_sick(ip->i_mount, XFS_INODE_TO_AGNO(ip),
+				ip->i_ino);
+			xfs_agno_mark_sick(ip->i_mount,
+					XFS_INO_TO_AGNO(ip->i_mount, ip->i_ino),
 					XFS_SICK_AG_INOBT);
 			return -EFSCORRUPTED;
 		}
@@ -511,7 +516,7 @@ xfs_iget_cache_hit(
 	 * will not match, so check for that, too.
 	 */
 	spin_lock(&ip->i_flags_lock);
-	if (I_INO(ip) != ino)
+	if (ip->i_ino != ino)
 		goto out_skip;
 
 	/*
@@ -641,7 +646,7 @@ xfs_iget_cache_miss(
 	 */
 	xfs_iflags_set(ip, XFS_INEW);
 
-	error = xfs_imap(pag, tp, I_INO(ip), &ip->i_imap, flags);
+	error = xfs_imap(pag, tp, ip->i_ino, &ip->i_imap, flags);
 	if (error)
 		goto out_destroy;
 
@@ -659,7 +664,7 @@ xfs_iget_cache_miss(
 	} else {
 		struct xfs_buf		*bp;
 
-		error = xfs_read_icluster(pag, tp, ip->i_imap.im_agbno, &bp);
+		error = xfs_imap_to_bp(mp, tp, &ip->i_imap, &bp);
 		if (error)
 			goto out_destroy;
 
@@ -814,11 +819,8 @@ again:
 	 * now.	 If it's a new inode being created, xfs_init_new_inode will
 	 * handle it.
 	 */
-	if (xfs_iflags_test(ip, XFS_INEW) && VFS_I(ip)->i_mode != 0) {
-		xfs_setup_inode(ip);
-		xfs_setup_iops(ip);
-		xfs_finish_inode_setup(ip);
-	}
+	if (xfs_iflags_test(ip, XFS_INEW) && VFS_I(ip)->i_mode != 0)
+		xfs_setup_existing_inode(ip);
 	return 0;
 
 out_error_or_again:
@@ -960,7 +962,7 @@ xfs_reclaim_inode(
 	struct xfs_inode	*ip,
 	struct xfs_perag	*pag)
 {
-	xfs_ino_t		ino = I_INO(ip); /* for radix_tree_delete */
+	xfs_ino_t		ino = ip->i_ino; /* for radix_tree_delete */
 
 	if (!xfs_ilock_nowait(ip, XFS_ILOCK_EXCL))
 		goto out;
@@ -1008,7 +1010,7 @@ reclaim:
 	 */
 	spin_lock(&ip->i_flags_lock);
 	ip->i_flags = XFS_IRECLAIM;
-	VFS_I(ip)->i_ino = 0;
+	ip->i_ino = 0;
 	ip->i_sick = 0;
 	ip->i_checked = 0;
 	spin_unlock(&ip->i_flags_lock);
@@ -1285,10 +1287,10 @@ xfs_blockgc_set_iflag(
 	ip->i_flags |= iflag;
 	spin_unlock(&ip->i_flags_lock);
 
-	pag = xfs_perag_get(mp, XFS_INODE_TO_AGNO(ip));
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ip->i_ino));
 	spin_lock(&pag->pag_ici_lock);
 
-	xfs_perag_set_inode_tag(pag, XFS_INODE_TO_AGINO(ip),
+	xfs_perag_set_inode_tag(pag, XFS_INO_TO_AGINO(mp, ip->i_ino),
 			XFS_ICI_BLOCKGC_TAG);
 
 	spin_unlock(&pag->pag_ici_lock);
@@ -1322,10 +1324,10 @@ xfs_blockgc_clear_iflag(
 	if (!clear_tag)
 		return;
 
-	pag = xfs_perag_get(mp, XFS_INODE_TO_AGNO(ip));
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ip->i_ino));
 	spin_lock(&pag->pag_ici_lock);
 
-	xfs_perag_clear_inode_tag(pag, XFS_INODE_TO_AGINO(ip),
+	xfs_perag_clear_inode_tag(pag, XFS_INO_TO_AGINO(mp, ip->i_ino),
 			XFS_ICI_BLOCKGC_TAG);
 
 	spin_unlock(&pag->pag_ici_lock);
@@ -1508,7 +1510,7 @@ xfs_blockgc_igrab(
 
 	/* Check for stale RCU freed inode */
 	spin_lock(&ip->i_flags_lock);
-	if (!I_INO(ip))
+	if (!ip->i_ino)
 		goto out_unlock_noent;
 
 	if (ip->i_flags & XFS_BLOCKGC_NOGRAB_IFLAGS)
@@ -1800,10 +1802,10 @@ restart:
 			 * us to see this inode, so another lookup from the
 			 * same index will not find it again.
 			 */
-			if (XFS_INODE_TO_AGNO(ip) != pag_agno(pag))
+			if (XFS_INO_TO_AGNO(mp, ip->i_ino) != pag_agno(pag))
 				continue;
-			first_index = XFS_INO_TO_AGINO(mp, I_INO(ip) + 1);
-			if (first_index < XFS_INODE_TO_AGINO(ip))
+			first_index = XFS_INO_TO_AGINO(mp, ip->i_ino + 1);
+			if (first_index < XFS_INO_TO_AGINO(mp, ip->i_ino))
 				done = true;
 		}
 
@@ -1890,7 +1892,7 @@ xfs_check_delalloc(
 		if (isnullstartblock(got.br_startblock)) {
 			xfs_warn(ip->i_mount,
 	"ino %llx %s fork has delalloc extent at [0x%llx:0x%llx]",
-				I_INO(ip),
+				ip->i_ino,
 				whichfork == XFS_DATA_FORK ? "data" : "cow",
 				got.br_startoff, got.br_blockcount);
 		}
@@ -1914,14 +1916,14 @@ xfs_inodegc_set_reclaimable(
 		ASSERT(0);
 	}
 
-	pag = xfs_perag_get(mp, XFS_INODE_TO_AGNO(ip));
+	pag = xfs_perag_get(mp, XFS_INO_TO_AGNO(mp, ip->i_ino));
 	spin_lock(&pag->pag_ici_lock);
 	spin_lock(&ip->i_flags_lock);
 
 	trace_xfs_inode_set_reclaimable(ip);
 	ip->i_flags &= ~(XFS_NEED_INACTIVE | XFS_INACTIVATING);
 	ip->i_flags |= XFS_IRECLAIMABLE;
-	xfs_perag_set_inode_tag(pag, XFS_INODE_TO_AGINO(ip),
+	xfs_perag_set_inode_tag(pag, XFS_INO_TO_AGINO(mp, ip->i_ino),
 			XFS_ICI_RECLAIM_TAG);
 
 	spin_unlock(&ip->i_flags_lock);

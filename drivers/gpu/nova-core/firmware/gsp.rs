@@ -8,24 +8,22 @@ use kernel::{
         DataDirection,
         DmaAddress, //
     },
-    firmware,
     prelude::*,
     scatterlist::{
         Owned,
         SGTable, //
     },
-    str::CString,
 };
 
 use crate::{
     firmware::{
+        elf,
         riscv::RiscvFirmware, //
-        tlv::{
-            request_tlv, //
-            Tlv,
-        },
     },
-    gpu::Chipset,
+    gpu::{
+        Architecture,
+        Chipset, //
+    },
     gsp::GSP_PAGE_SIZE,
     num::FromSafeCast,
 };
@@ -70,21 +68,23 @@ impl GspFirmware {
     pub(crate) fn new<'a>(
         dev: &'a device::Device<device::Bound>,
         chipset: Chipset,
+        ver: &'a str,
     ) -> impl PinInit<Self, Error> + 'a {
         pin_init::pin_init_scope(move || {
-            let firmware = request_tlv(dev, chipset, "gsp")?;
-            let tlv = Tlv::new(firmware.data())?;
-            dev_dbg!(dev, "loaded gsp firmware v{}\n", tlv.get_string(b"VERS")?);
+            let firmware = super::request_firmware(dev, chipset, "gsp", ver)?;
 
-            let size = usize::from_safe_cast(tlv.get_u32(b"SIZE")?);
-            let mut fw_vvec = VVec::zeroed(size, GFP_KERNEL).map_err(|_| ENOMEM)?;
+            let fw_section = elf::elf64_section(firmware.data(), ".fwimage").ok_or(EINVAL)?;
 
-            let chip_name = chipset.name();
-            let file = tlv.get_string(b"FILE")?;
-            let filename = CString::try_from_fmt(fmt!("nvidia/{chip_name}/gsp/{file}"))?;
-            firmware::request_into_buf(&filename, dev, fw_vvec.as_mut_slice())?;
+            let size = fw_section.len();
 
-            let signatures = Coherent::from_slice(dev, tlv.get_bytes(b"SIGN")?, GFP_KERNEL)?;
+            // Move the firmware into a vmalloc'd vector and map it into the device address
+            // space.
+            let fw_vvec = VVec::with_capacity(fw_section.len(), GFP_KERNEL)
+                .and_then(|mut v| {
+                    v.extend_from_slice(fw_section, GFP_KERNEL)?;
+                    Ok(v)
+                })
+                .map_err(|_| ENOMEM)?;
 
             Ok(try_pin_init!(Self {
                 fw <- SGTable::new(dev, fw_vvec, DataDirection::ToDevice, GFP_KERNEL),
@@ -130,9 +130,26 @@ impl GspFirmware {
                     level0.into()
                 },
                 size,
-                signatures,
+                signatures: {
+                    let sigs_section = match chipset.arch() {
+                        Architecture::Turing
+                            if matches!(chipset, Chipset::TU116 | Chipset::TU117) =>
+                        {
+                            ".fwsignature_tu11x"
+                        }
+                        Architecture::Turing => ".fwsignature_tu10x",
+                        // GA100 uses the same firmware as Turing
+                        Architecture::Ampere if chipset == Chipset::GA100 => ".fwsignature_tu10x",
+                        Architecture::Ampere => ".fwsignature_ga10x",
+                        Architecture::Ada => ".fwsignature_ad10x",
+                    };
+
+                    elf::elf64_section(firmware.data(), sigs_section)
+                        .ok_or(EINVAL)
+                        .and_then(|data| Coherent::from_slice(dev, data, GFP_KERNEL))?
+                },
                 bootloader: {
-                    let bl = request_tlv(dev, chipset, "gsp_bootloader")?;
+                    let bl = super::request_firmware(dev, chipset, "bootloader", ver)?;
 
                     RiscvFirmware::new(dev, &bl)?
                 },
@@ -140,9 +157,9 @@ impl GspFirmware {
         })
     }
 
-    /// Returns the DMA address of the radix3 level 0 page table.
-    pub(crate) fn radix3_dma_address(&self) -> DmaAddress {
-        self.level0.dma_address()
+    /// Returns the DMA handle of the radix3 level 0 page table.
+    pub(crate) fn radix3_dma_handle(&self) -> DmaAddress {
+        self.level0.dma_handle()
     }
 }
 

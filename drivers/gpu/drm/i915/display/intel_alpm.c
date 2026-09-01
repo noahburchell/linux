@@ -11,7 +11,6 @@
 #include "intel_crtc.h"
 #include "intel_de.h"
 #include "intel_display_types.h"
-#include "intel_display_utils.h"
 #include "intel_dp.h"
 #include "intel_dp_aux.h"
 #include "intel_psr.h"
@@ -291,9 +290,7 @@ void intel_alpm_lobf_compute_config_late(struct intel_dp *intel_dp,
 	if (!crtc_state->has_lobf)
 		return;
 
-	if (crtc_state->has_psr ||
-	    !intel_vrr_is_fixed_rr(crtc_state) ||
-	    !intel_alpm_lobf_is_window1_sufficient(crtc_state)) {
+	if (!intel_alpm_lobf_is_window1_sufficient(crtc_state)) {
 		crtc_state->has_lobf = false;
 		return;
 	}
@@ -345,7 +342,11 @@ void intel_alpm_lobf_compute_config(struct intel_dp *intel_dp,
 	if (!intel_dp->as_sdp_supported)
 		return;
 
-	if (!intel_vrr_always_use_vrr_tg(display))
+	if (crtc_state->has_psr)
+		return;
+
+	if (!intel_vrr_always_use_vrr_tg(display) ||
+	    !intel_vrr_is_fixed_rr(crtc_state))
 		return;
 
 	if (!(intel_alpm_aux_wake_supported(intel_dp) ||
@@ -356,23 +357,6 @@ void intel_alpm_lobf_compute_config(struct intel_dp *intel_dp,
 		return;
 
 	crtc_state->has_lobf = true;
-}
-
-static u32 get_pr_alpm_as_sdp_transmission_time(const struct intel_crtc_state *crtc_state)
-{
-	u8 as_sdp_setup_time = intel_dp_as_sdp_transmission_time();
-
-	switch (as_sdp_setup_time) {
-	case DP_PR_AS_SDP_SETUP_TIME_T1:
-		return PR_ALPM_CTL_ADAPTIVE_SYNC_SDP_POSITION_T1;
-	case DP_PR_AS_SDP_SETUP_TIME_DYNAMIC:
-		return PR_ALPM_CTL_ADAPTIVE_SYNC_SDP_POSITION_T1_OR_T2;
-	case DP_PR_AS_SDP_SETUP_TIME_T2:
-		return PR_ALPM_CTL_ADAPTIVE_SYNC_SDP_POSITION_T2;
-	default:
-		MISSING_CASE(as_sdp_setup_time);
-		return PR_ALPM_CTL_ADAPTIVE_SYNC_SDP_POSITION_T1;
-	}
 }
 
 static void lnl_alpm_configure(struct intel_dp *intel_dp,
@@ -397,18 +381,13 @@ static void lnl_alpm_configure(struct intel_dp *intel_dp,
 			ALPM_CTL_AUX_LESS_SLEEP_HOLD_TIME_50_SYMBOLS |
 			ALPM_CTL_AUX_LESS_WAKE_TIME(crtc_state->alpm_state.aux_less_wake_lines);
 
-		if (intel_dp->as_sdp_supported) {
-			u32 pr_alpm_ctl = get_pr_alpm_as_sdp_transmission_time(crtc_state);
+		if (intel_dp->as_sdp_supported && crtc_state->has_panel_replay) {
+			u32 pr_alpm_ctl = PR_ALPM_CTL_ADAPTIVE_SYNC_SDP_POSITION_T1;
 
 			if (crtc_state->link_off_after_as_sdp_when_pr_active)
 				pr_alpm_ctl |= PR_ALPM_CTL_ALLOW_LINK_OFF_BETWEEN_AS_SDP_AND_SU;
 			if (crtc_state->disable_as_sdp_when_pr_active)
 				pr_alpm_ctl |= PR_ALPM_CTL_AS_SDP_TRANSMISSION_IN_ACTIVE_DISABLE;
-
-			if (intel_display_power_dc3co_allowed(display))
-				pr_alpm_ctl |= PR_ALPM_CTL_USE_DC3CO_IDLE_PROTOCOL;
-			else
-				pr_alpm_ctl &= ~PR_ALPM_CTL_USE_DC3CO_IDLE_PROTOCOL;
 
 			intel_de_write(display, PR_ALPM_CTL(display, cpu_transcoder),
 				       pr_alpm_ctl);
@@ -502,8 +481,8 @@ void intel_alpm_enable_sink(struct intel_dp *intel_dp,
 
 	val = DP_ALPM_ENABLE | DP_ALPM_LOCK_ERROR_IRQ_HPD_ENABLE;
 
-	if (crtc_state->has_panel_replay || (crtc_state->has_lobf &&
-					     intel_alpm_aux_less_wake_supported(intel_dp)))
+	if (intel_psr_needs_alpm_aux_less(intel_dp, crtc_state) ||
+	    (crtc_state->has_lobf && intel_alpm_aux_less_wake_supported(intel_dp)))
 		val |= DP_ALPM_MODE_AUX_LESS;
 
 	drm_dp_dpcd_writeb(&intel_dp->aux, DP_RECEIVER_ALPM_CONFIG, val);

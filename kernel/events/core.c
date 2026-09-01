@@ -58,7 +58,6 @@
 #include <linux/percpu-rwsem.h>
 #include <linux/unwind_deferred.h>
 #include <linux/kvm_types.h>
-#include <linux/seq_file.h>
 
 #include "internal.h"
 
@@ -2343,34 +2342,6 @@ static inline struct list_head *get_event_list(struct perf_event *event)
 				    &event->pmu_ctx->flexible_active;
 }
 
-/* @sibling must already be unlinked from its old leader's sibling_list. */
-static void perf_promote_sibling_to_leader(struct perf_event *sibling,
-					   struct perf_event_context *ctx,
-					   int group_caps)
-{
-	/*
-	 * Events that have PERF_EV_CAP_SIBLING require being part of
-	 * a group and cannot exist on their own, schedule them out
-	 * and move them into the ERROR state. Also see
-	 * _perf_event_enable(), it will not be able to recover this
-	 * ERROR state.
-	 */
-	if (sibling->event_caps & PERF_EV_CAP_SIBLING)
-		__event_disable(sibling, ctx, PERF_EVENT_STATE_ERROR);
-
-	sibling->group_leader = sibling;
-	sibling->group_caps = group_caps;
-
-	if (sibling->attach_state & PERF_ATTACH_CONTEXT) {
-		add_event_to_groups(sibling, ctx);
-
-		if (sibling->state == PERF_EVENT_STATE_ACTIVE)
-			list_add_tail(&sibling->active_list, get_event_list(sibling));
-	}
-
-	perf_event__header_size(sibling);
-}
-
 static void perf_group_detach(struct perf_event *event)
 {
 	struct perf_event *leader = event->group_leader;
@@ -2394,9 +2365,8 @@ static void perf_group_detach(struct perf_event *event)
 	 */
 	if (leader != event) {
 		list_del_init(&event->sibling_list);
-		leader->nr_siblings--;
-		leader->group_generation++;
-		perf_promote_sibling_to_leader(event, ctx, event->event_caps);
+		event->group_leader->nr_siblings--;
+		event->group_leader->group_generation++;
 		goto out;
 	}
 
@@ -2406,14 +2376,32 @@ static void perf_group_detach(struct perf_event *event)
 	 * to whatever list we are on.
 	 */
 	list_for_each_entry_safe(sibling, tmp, &event->sibling_list, sibling_list) {
+
+		/*
+		 * Events that have PERF_EV_CAP_SIBLING require being part of
+		 * a group and cannot exist on their own, schedule them out
+		 * and move them into the ERROR state. Also see
+		 * _perf_event_enable(), it will not be able to recover this
+		 * ERROR state.
+		 */
+		if (sibling->event_caps & PERF_EV_CAP_SIBLING)
+			__event_disable(sibling, ctx, PERF_EVENT_STATE_ERROR);
+
+		sibling->group_leader = sibling;
 		list_del_init(&sibling->sibling_list);
 
 		/* Inherit group flags from the previous leader */
-		perf_promote_sibling_to_leader(sibling, ctx, event->group_caps);
+		sibling->group_caps = event->group_caps;
+
+		if (sibling->attach_state & PERF_ATTACH_CONTEXT) {
+			add_event_to_groups(sibling, event->ctx);
+
+			if (sibling->state == PERF_EVENT_STATE_ACTIVE)
+				list_add_tail(&sibling->active_list, get_event_list(sibling));
+		}
 
 		WARN_ON_ONCE(sibling->ctx != event->ctx);
 	}
-	event->nr_siblings = 0;
 
 out:
 	for_each_sibling_event(tmp, leader)
@@ -2603,7 +2591,12 @@ __perf_remove_from_context(struct perf_event *event,
 	if (flags & DETACH_DEAD)
 		state = PERF_EVENT_STATE_DEAD;
 
-	__event_disable(event, ctx, state);
+	event_sched_out(event, ctx);
+
+	if (event->state > PERF_EVENT_STATE_OFF)
+		perf_cgroup_event_disable(event, ctx);
+
+	perf_event_set_state(event, min(event->state, state));
 
 	if (flags & DETACH_GROUP)
 		perf_group_detach(event);
@@ -2672,9 +2665,8 @@ static void __event_disable(struct perf_event *event,
 			    enum perf_event_state state)
 {
 	event_sched_out(event, ctx);
-	if (event->state > PERF_EVENT_STATE_OFF)
-		perf_cgroup_event_disable(event, ctx);
-	perf_event_set_state(event, min(event->state, state));
+	perf_cgroup_event_disable(event, ctx);
+	perf_event_set_state(event, state);
 }
 
 /*
@@ -5311,7 +5303,6 @@ static void free_event_rcu(struct rcu_head *head)
 	if (event->ns)
 		put_pid_ns(event->ns);
 	perf_event_free_filter(event);
-	kfree(event->addr_filter_ranges);
 	kmem_cache_free(perf_event_cache, event);
 }
 
@@ -5758,6 +5749,8 @@ static void __free_event(struct perf_event *event)
 
 	if (event->attach_state & PERF_ATTACH_CALLCHAIN)
 		put_callchain_buffers();
+
+	kfree(event->addr_filter_ranges);
 
 	if (event->attach_state & PERF_ATTACH_EXCLUSIVE)
 		exclusive_event_destroy(event);
@@ -7005,7 +6998,7 @@ static void perf_mmap_open(struct vm_area_struct *vma)
 	refcount_inc(&event->mmap_count);
 	refcount_inc(&event->rb->mmap_count);
 
-	if (vma_start_pgoff(vma))
+	if (vma->vm_pgoff)
 		refcount_inc(&event->rb->aux_mmap_count);
 
 	if (mapped)
@@ -7039,7 +7032,7 @@ static void perf_mmap_close(struct vm_area_struct *vma)
 	 * The AUX buffer is strictly a sub-buffer, serialize using aux_mutex
 	 * to avoid complications.
 	 */
-	if (rb_has_aux(rb) && vma_start_pgoff(vma) == rb->aux_pgoff &&
+	if (rb_has_aux(rb) && vma->vm_pgoff == rb->aux_pgoff &&
 	    refcount_dec_and_mutex_lock(&rb->aux_mmap_count, &rb->aux_mutex)) {
 		/*
 		 * Stop all AUX events that are writing to this buffer,
@@ -7199,8 +7192,7 @@ static int map_range(struct perf_buffer *rb, struct vm_area_struct *vma)
 	 */
 	for (pagenum = 0; pagenum < nr_pages; pagenum++) {
 		unsigned long va = vma->vm_start + PAGE_SIZE * pagenum;
-		struct page *page = perf_mmap_to_page(rb,
-				vma_start_pgoff(vma) + pagenum);
+		struct page *page = perf_mmap_to_page(rb, vma->vm_pgoff + pagenum);
 
 		if (page == NULL) {
 			err = -EINVAL;
@@ -7354,7 +7346,6 @@ static int perf_mmap_rb(struct vm_area_struct *vma, struct perf_event *event,
 static int perf_mmap_aux(struct vm_area_struct *vma, struct perf_event *event,
 			 unsigned long nr_pages)
 {
-	const pgoff_t pgoff_start = vma_start_pgoff(vma);
 	long extra = 0, user_extra = nr_pages;
 	u64 aux_offset, aux_size;
 	struct perf_buffer *rb;
@@ -7377,11 +7368,11 @@ static int perf_mmap_aux(struct vm_area_struct *vma, struct perf_event *event,
 	if (aux_offset < perf_data_size(rb) + PAGE_SIZE)
 		return -EINVAL;
 
-	if (aux_offset != pgoff_start << PAGE_SHIFT)
+	if (aux_offset != vma->vm_pgoff << PAGE_SHIFT)
 		return -EINVAL;
 
 	/* already mapped with a different offset */
-	if (rb_has_aux(rb) && rb->aux_pgoff != pgoff_start)
+	if (rb_has_aux(rb) && rb->aux_pgoff != vma->vm_pgoff)
 		return -EINVAL;
 
 	if (aux_size != nr_pages * PAGE_SIZE)
@@ -7411,7 +7402,7 @@ static int perf_mmap_aux(struct vm_area_struct *vma, struct perf_event *event,
 		if (vma->vm_flags & VM_WRITE)
 			rb_flags |= RING_BUFFER_WRITABLE;
 
-		ret = rb_alloc_aux(rb, event, pgoff_start, nr_pages,
+		ret = rb_alloc_aux(rb, event, vma->vm_pgoff, nr_pages,
 				   event->attr.aux_watermark, rb_flags);
 		if (ret) {
 			refcount_dec(&rb->mmap_count);
@@ -7468,7 +7459,7 @@ static int perf_mmap(struct file *file, struct vm_area_struct *vma)
 		if (event->state <= PERF_EVENT_STATE_REVOKED)
 			return -ENODEV;
 
-		if (!vma_start_pgoff(vma))
+		if (vma->vm_pgoff == 0)
 			ret = perf_mmap_rb(vma, event, nr_pages);
 		else
 			ret = perf_mmap_aux(vma, event, nr_pages);
@@ -7557,33 +7548,6 @@ static int perf_fasync(int fd, struct file *filp, int on)
 	return 0;
 }
 
-static void perf_show_fdinfo(struct seq_file *m, struct file *f)
-{
-	struct perf_event *event = f->private_data;
-	struct perf_event_context *ctx;
-	struct mutex *child_mutex;
-
-	ctx = perf_event_ctx_lock(event);
-	child_mutex = event->parent ? &event->parent->child_mutex : &event->child_mutex;
-	mutex_lock(child_mutex);
-
-	seq_printf(m, "perf_event_attr.type:\t%u\n", event->orig_type);
-	if (event->pmu)
-		seq_printf(m, "pmu_type:\t%u\n", event->pmu->type);
-	seq_printf(m, "perf_event_attr.config:\t0x%llx\n", (unsigned long long)event->attr.config);
-	seq_printf(m, "perf_event_attr.config1:\t0x%llx\n",
-		   (unsigned long long)event->attr.config1);
-	seq_printf(m, "perf_event_attr.config2:\t0x%llx\n",
-		   (unsigned long long)event->attr.config2);
-	seq_printf(m, "perf_event_attr.config3:\t0x%llx\n",
-		   (unsigned long long)event->attr.config3);
-	seq_printf(m, "perf_event_attr.config4:\t0x%llx\n",
-		   (unsigned long long)event->attr.config4);
-
-	mutex_unlock(child_mutex);
-	perf_event_ctx_unlock(event, ctx);
-}
-
 static const struct file_operations perf_fops = {
 	.release		= perf_release,
 	.read			= perf_read,
@@ -7592,7 +7556,6 @@ static const struct file_operations perf_fops = {
 	.compat_ioctl		= perf_compat_ioctl,
 	.mmap			= perf_mmap,
 	.fasync			= perf_fasync,
-	.show_fdinfo		= perf_show_fdinfo,
 };
 
 /*
@@ -7802,20 +7765,10 @@ unsigned long perf_misc_flags(struct perf_event *event,
 unsigned long perf_instruction_pointer(struct perf_event *event,
 				       struct pt_regs *regs)
 {
-	/*
-	 * Hardware skid can lead to a scenario where a PMI is
-	 * delivered after the CPU has already entered kernel mode.
-	 * In that case, user-space sampling must not expose kernel
-	 * register state.
-	 */
-	if (should_sample_guest(event)) {
-		return event->attr.exclude_kernel &&
-		       !(perf_guest_state() & PERF_GUEST_USER) ?
-			0 : perf_guest_get_ip();
-	}
+	if (should_sample_guest(event))
+		return perf_guest_get_ip();
 
-	return event->attr.exclude_kernel && !user_mode(regs) ?
-		0 : perf_arch_instruction_pointer(regs);
+	return perf_arch_instruction_pointer(regs);
 }
 
 static void
@@ -7849,22 +7802,10 @@ static void perf_sample_regs_user(struct perf_regs *regs_user,
 }
 
 static void perf_sample_regs_intr(struct perf_regs *regs_intr,
-				  struct pt_regs *regs,
-				  bool exclude_kernel)
+				  struct pt_regs *regs)
 {
-	/*
-	 * Hardware skid can lead to a scenario where a PMI is
-	 * delivered after the CPU has already entered kernel mode.
-	 * In that case, user-space sampling must not expose kernel
-	 * register state.
-	 */
-	if (exclude_kernel && !user_mode(regs)) {
-		regs_intr->abi = PERF_SAMPLE_REGS_ABI_NONE;
-		regs_intr->regs = NULL;
-	} else {
-		regs_intr->regs = regs;
-		regs_intr->abi = perf_reg_abi(current);
-	}
+	regs_intr->regs = regs;
+	regs_intr->abi  = perf_reg_abi(current);
 }
 
 
@@ -8755,8 +8696,7 @@ void perf_prepare_sample(struct perf_sample_data *data,
 		/* regs dump ABI info */
 		int size = sizeof(u64);
 
-		perf_sample_regs_intr(&data->regs_intr, regs,
-				      event->attr.exclude_kernel);
+		perf_sample_regs_intr(&data->regs_intr, regs);
 
 		if (data->regs_intr.regs) {
 			u64 mask = event->attr.sample_regs_intr;
@@ -9918,7 +9858,7 @@ static bool perf_addr_filter_vma_adjust(struct perf_addr_filter *filter,
 					struct perf_addr_filter_range *fr)
 {
 	unsigned long vma_size = vma->vm_end - vma->vm_start;
-	unsigned long off = vma_start_pgoff(vma) << PAGE_SHIFT;
+	unsigned long off = vma->vm_pgoff << PAGE_SHIFT;
 	struct file *file = vma->vm_file;
 
 	if (!perf_addr_filter_match(filter, file, off, vma_size))
@@ -10008,7 +9948,7 @@ void perf_event_mmap(struct vm_area_struct *vma)
 			/* .tid */
 			.start  = vma->vm_start,
 			.len    = vma->vm_end - vma->vm_start,
-			.pgoff  = (u64)vma_start_pgoff(vma) << PAGE_SHIFT,
+			.pgoff  = (u64)vma->vm_pgoff << PAGE_SHIFT,
 		},
 		/* .maj (attr_mmap2 only) */
 		/* .min (attr_mmap2 only) */
@@ -11745,15 +11685,6 @@ static int __perf_event_set_bpf_prog(struct perf_event *event,
 		/* only uprobe programs are allowed to be sleepable */
 		return -EINVAL;
 
-	if (prog->type == BPF_PROG_TYPE_TRACEPOINT && prog->sleepable) {
-		/*
-		 * Sleepable tracepoint programs can only attach to faultable
-		 * tracepoints. Currently only syscall tracepoints are faultable.
-		 */
-		if (!is_syscall_tp)
-			return -EINVAL;
-	}
-
 	/* Kprobe override only works for kprobes, not uprobes. */
 	if (prog->kprobe_override && !is_kprobe)
 		return -EINVAL;
@@ -12728,7 +12659,7 @@ static ssize_t cpumask_show(struct device *dev, struct device_attribute *attr,
 	struct cpumask *mask = perf_scope_cpumask(pmu->scope);
 
 	if (mask)
-		return sysfs_emit(buf, "%*pbl\n", cpumask_pr_args(mask));
+		return cpumap_print_to_pagebuf(true, buf, mask);
 	return 0;
 }
 
@@ -13943,9 +13874,7 @@ SYSCALL_DEFINE5(perf_event_open,
 	if (err)
 		return err;
 
-	if (!attr.exclude_kernel ||
-	    ((attr.sample_type & PERF_SAMPLE_CALLCHAIN) &&
-	     !attr.exclude_callchain_kernel)) {
+	if (!attr.exclude_kernel) {
 		err = perf_allow_kernel();
 		if (err)
 			return err;
@@ -14006,7 +13935,7 @@ SYSCALL_DEFINE5(perf_event_open,
 			goto err_fd;
 		}
 		group_leader = fd_file(group)->private_data;
-		if (group_leader->state <= PERF_EVENT_STATE_EXIT) {
+		if (group_leader->state <= PERF_EVENT_STATE_REVOKED) {
 			err = -ENODEV;
 			goto err_fd;
 		}
@@ -14136,12 +14065,6 @@ SYSCALL_DEFINE5(perf_event_open,
 		 */
 		if (group_leader->ctx != ctx)
 			goto err_locked;
-
-		/* Recheck under ctx::mutex to serialize against remove-on-exec. */
-		if (group_leader->state <= PERF_EVENT_STATE_EXIT) {
-			err = -ENODEV;
-			goto err_locked;
-		}
 
 		/*
 		 * Only a group leader can be exclusive or pinned
@@ -14810,24 +14733,6 @@ int perf_allow_kernel(void)
 	return security_perf_event_open(PERF_SECURITY_KERNEL);
 }
 EXPORT_SYMBOL_GPL(perf_allow_kernel);
-
-int perf_allow_cpu(void)
-{
-	if (sysctl_perf_event_paranoid > 0 && !perfmon_capable())
-		return -EACCES;
-
-	return security_perf_event_open(PERF_SECURITY_CPU);
-}
-EXPORT_SYMBOL_GPL(perf_allow_cpu);
-
-int perf_allow_tracepoint(void)
-{
-	if (sysctl_perf_event_paranoid > -1 && !perfmon_capable())
-		return -EPERM;
-
-	return security_perf_event_open(PERF_SECURITY_TRACEPOINT);
-}
-EXPORT_SYMBOL_GPL(perf_allow_tracepoint);
 
 /*
  * Inherit an event from parent task to child task.

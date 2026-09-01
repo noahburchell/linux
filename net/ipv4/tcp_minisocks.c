@@ -392,6 +392,7 @@ void tcp_time_wait(struct sock *sk, int state, int timeo)
 	tcp_update_metrics(sk);
 	tcp_done(sk);
 }
+EXPORT_SYMBOL(tcp_time_wait);
 
 void tcp_twsk_destructor(struct sock *sk)
 {
@@ -440,7 +441,7 @@ void tcp_openreq_init_rwin(struct request_sock *req,
 	u32 rcv_wnd;
 	int mss;
 
-	mss = tcp_mss_clamp(tp, tcp_dst_advmss(dst));
+	mss = tcp_mss_clamp(tp, dst_metric_advmss(dst));
 	window_clamp = READ_ONCE(tp->window_clamp);
 	/* Set this up on the first call only */
 	req->rsk_window_clamp = window_clamp ? : dst_metric(dst, RTAX_WINDOW);
@@ -453,8 +454,8 @@ void tcp_openreq_init_rwin(struct request_sock *req,
 	rcv_wnd = tcp_rwnd_init_bpf((struct sock *)req);
 	if (rcv_wnd == 0)
 		rcv_wnd = dst_metric(dst, RTAX_INITRWND);
-	else if (full_space < (u64)rcv_wnd * mss)
-		full_space = min_t(u64, (u64)rcv_wnd * mss, INT_MAX);
+	else if (full_space < rcv_wnd * mss)
+		full_space = rcv_wnd * mss;
 
 	/* tcp_full_space because it is guaranteed to be the first packet */
 	tcp_select_initial_window(sk_listener, full_space,
@@ -499,6 +500,8 @@ void tcp_ca_openreq_child(struct sock *sk, const struct dst_entry *dst)
 	struct inet_connection_sock *icsk = inet_csk(sk);
 	u32 ca_key = dst_metric(dst, RTAX_CC_ALGO);
 	bool ca_got_dst = false;
+
+	tcp_set_ecn_low_from_dst(sk, dst);
 
 	if (ca_key != TCP_CA_UNSPEC) {
 		const struct tcp_congestion_ops *ca;
@@ -669,6 +672,7 @@ struct sock *tcp_create_openreq_child(const struct sock *sk,
 
 	return newsk;
 }
+EXPORT_SYMBOL(tcp_create_openreq_child);
 
 /*
  * Process an incoming packet for SYN_RECV sockets represented as a

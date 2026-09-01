@@ -61,7 +61,7 @@ static __always_inline void sync_core(void)
 	 * The SERIALIZE instruction is the most straightforward way to
 	 * do this, but it is not universally available.
 	 */
-	if (cpu_feature_enabled(X86_FEATURE_SERIALIZE)) {
+	if (static_cpu_has(X86_FEATURE_SERIALIZE)) {
 		serialize();
 		return;
 	}
@@ -93,10 +93,10 @@ static __always_inline void sync_core(void)
  * to user-mode. x86 implements return to user-space through sysexit,
  * sysrel, and sysretq, which are not core serializing.
  */
-static inline void sync_core_before_usermode(void)
+static __always_inline void sync_core_before_usermode(void)
 {
 	/* With PTI, we unconditionally serialize before running user code. */
-	if (cpu_feature_enabled(X86_FEATURE_PTI))
+	if (static_cpu_has(X86_FEATURE_PTI))
 		return;
 
 	/*

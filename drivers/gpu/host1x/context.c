@@ -4,7 +4,6 @@
  */
 
 #include <linux/device.h>
-#include <linux/host1x_context_bus.h>
 #include <linux/kref.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
@@ -24,7 +23,7 @@ int host1x_memory_context_list_init(struct host1x *host1x)
 	struct host1x_memory_context_list *cdl = &host1x->context_list;
 	struct device_node *node = host1x->dev->of_node;
 	struct host1x_memory_context *ctx;
-	unsigned int devs, i;
+	unsigned int i;
 	int err;
 
 	cdl->devs = NULL;
@@ -35,16 +34,7 @@ int host1x_memory_context_list_init(struct host1x *host1x)
 	if (err < 0)
 		return 0;
 
-	devs = 0;
-
-	for (i = 0; i < err / 4; i++) {
-		u32 length;
-
-		of_property_read_u32_index(node, "iommu-map", i * 4 + 3, &length);
-		devs += length;
-	}
-
-	cdl->len = devs;
+	cdl->len = err / 4;
 	cdl->devs = kzalloc_objs(*cdl->devs, cdl->len);
 	if (!cdl->devs)
 		return -ENOMEM;

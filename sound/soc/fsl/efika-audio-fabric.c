@@ -22,6 +22,8 @@
 #include <sound/initval.h>
 #include <sound/soc.h>
 
+#include "mpc5200_dma.h"
+
 #define DRV_NAME "efika-audio-fabric"
 
 SND_SOC_DAILINK_DEFS(analog,

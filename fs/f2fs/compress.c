@@ -14,7 +14,6 @@
 #include <linux/lz4.h>
 #include <linux/zstd.h>
 #include <linux/folio_batch.h>
-#include <linux/fserror.h>
 
 #include "f2fs.h"
 #include "node.h"
@@ -761,7 +760,6 @@ void f2fs_decompress_cluster(struct decompress_io_ctx *dic, bool in_task)
 
 		/* Avoid f2fs_commit_super in irq context */
 		f2fs_handle_error(sbi, ERROR_FAIL_DECOMPRESSION);
-		fserror_report_file_metadata(dic->inode, ret, GFP_NOFS);
 		goto out_release;
 	}
 
@@ -1286,6 +1284,8 @@ static int f2fs_write_compressed_pages(struct compress_ctx *cc,
 		.compressed_page = NULL,
 		.io_type = io_type,
 		.io_wbc = wbc,
+		.encrypted = fscrypt_inode_uses_fs_layer_crypto(cc->inode) ?
+									1 : 0,
 	};
 	struct folio *folio;
 	struct dnode_of_data dn;
@@ -1359,6 +1359,14 @@ static int f2fs_write_compressed_pages(struct compress_ctx *cc,
 
 		/* wait for GCed page writeback via META_MAPPING */
 		f2fs_wait_on_block_writeback(inode, fio.old_blkaddr);
+
+		if (fio.encrypted) {
+			fio.page = cc->rpages[i + 1];
+			err = f2fs_encrypt_one_page(&fio);
+			if (err)
+				goto out_destroy_crypt;
+			cc->cpages[i] = fio.encrypted_page;
+		}
 	}
 
 	set_cluster_writeback(cc);
@@ -1396,15 +1404,21 @@ static int f2fs_write_compressed_pages(struct compress_ctx *cc,
 
 		f2fs_bug_on(fio.sbi, blkaddr == NULL_ADDR);
 
-		fio.compressed_page = cc->cpages[i - 1];
+		if (fio.encrypted)
+			fio.encrypted_page = cc->cpages[i - 1];
+		else
+			fio.compressed_page = cc->cpages[i - 1];
 
 		cc->cpages[i - 1] = NULL;
 		fio.submitted = 0;
 		f2fs_outplace_write_data(&dn, &fio);
 		if (unlikely(!fio.submitted)) {
 			cancel_cluster_writeback(cc, cic, i);
+
+			/* To call fscrypt_finalize_bounce_page */
+			i = cc->valid_nr_cpages;
 			*submitted = 0;
-			goto out_free_page_array;
+			goto out_destroy_crypt;
 		}
 		(*submitted)++;
 unlock_continue:
@@ -1436,8 +1450,14 @@ unlock_continue:
 	f2fs_destroy_compress_ctx(cc, false);
 	return 0;
 
-out_free_page_array:
+out_destroy_crypt:
 	page_array_free(sbi, cic->rpages, cc->cluster_size);
+
+	for (--i; i >= 0; i--) {
+		if (!cc->cpages[i])
+			continue;
+		fscrypt_finalize_bounce_page(&cc->cpages[i]);
+	}
 out_put_cic:
 	kmem_cache_free(cic_entry_slab, cic);
 out_put_dnode:
@@ -1462,7 +1482,8 @@ void f2fs_compress_write_end_io(struct bio *bio, struct folio *folio)
 	struct page *page = &folio->page;
 	struct f2fs_sb_info *sbi = bio->bi_private;
 	struct compress_io_ctx *cic = folio->private;
-	enum count_type type = WB_DATA_TYPE(folio, true);
+	enum count_type type = WB_DATA_TYPE(folio,
+				f2fs_is_compressed_page(folio));
 	int i;
 
 	if (unlikely(bio->bi_status != BLK_STS_OK))
@@ -1786,7 +1807,7 @@ static void f2fs_put_dic(struct decompress_io_ctx *dic, bool in_task)
 			f2fs_free_dic(dic, false);
 		} else {
 			INIT_WORK(&dic->free_work, f2fs_late_free_dic);
-			queue_work(dic->sbi->wq, &dic->free_work);
+			queue_work(dic->sbi->post_read_wq, &dic->free_work);
 		}
 	}
 }

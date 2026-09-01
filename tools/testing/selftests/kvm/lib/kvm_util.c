@@ -15,22 +15,14 @@
 #include <sys/resource.h>
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <time.h>
 #include <unistd.h>
 #include <linux/kernel.h>
 
 #define KVM_UTIL_MIN_PFN	2
 
-u32 kvm_random_seed;
-struct kvm_random_state kvm_rng;
-static u32 last_kvm_seed;
-
-static void kvm_seed_rng(u32 seed)
-{
-	kvm_random_seed = last_kvm_seed = seed;
-	pr_info("Random seed: 0x%x\n", kvm_random_seed);
-	kvm_rng = new_kvm_random_state(kvm_random_seed);
-}
+u32 guest_random_seed;
+struct guest_random_state guest_rng;
+static u32 last_guest_seed;
 
 static size_t vcpu_mmap_sz(void);
 
@@ -85,8 +77,7 @@ static ssize_t get_module_param(const char *module_name, const char *param,
 	int fd, r;
 
 	/* Verify KVM is loaded, to provide a more helpful SKIP message. */
-	fd = open_kvm_dev_path_or_exit();
-	kvm_free_fd(fd);
+	close(open_kvm_dev_path_or_exit());
 
 	r = snprintf(path, path_size, "/sys/module/%s/parameters/%s",
 		     module_name, param);
@@ -99,7 +90,8 @@ static ssize_t get_module_param(const char *module_name, const char *param,
 	TEST_ASSERT(bytes_read > 0, "read(%s) returned %ld, wanted %ld bytes",
 		    path, bytes_read, buffer_size);
 
-	kvm_free_fd(fd);
+	r = close(fd);
+	TEST_ASSERT(!r, "close(%s) failed", path);
 	return bytes_read;
 }
 
@@ -168,7 +160,7 @@ unsigned int kvm_check_cap(long cap)
 	ret = __kvm_ioctl(kvm_fd, KVM_CHECK_EXTENSION, (void *)cap);
 	TEST_ASSERT(ret >= 0, KVM_IOCTL_ERROR(KVM_CHECK_EXTENSION, ret));
 
-	kvm_free_fd(kvm_fd);
+	close(kvm_fd);
 
 	return (unsigned int)ret;
 }
@@ -523,10 +515,12 @@ struct kvm_vm *__vm_create(struct vm_shape shape, u32 nr_runnable_vcpus,
 	slot0 = memslot2region(vm, 0);
 	ucall_init(vm, slot0->region.guest_phys_addr + slot0->region.memory_size);
 
-	if (kvm_random_seed != last_kvm_seed)
-		kvm_seed_rng(kvm_random_seed);
-
-	sync_global_to_guest(vm, kvm_rng);
+	if (guest_random_seed != last_guest_seed) {
+		pr_info("Random seed: 0x%x\n", guest_random_seed);
+		last_guest_seed = guest_random_seed;
+	}
+	guest_rng = new_guest_random_state(guest_random_seed);
+	sync_global_to_guest(vm, guest_rng);
 
 	kvm_arch_vm_post_create(vm, nr_runnable_vcpus);
 
@@ -668,37 +662,19 @@ void kvm_print_vcpu_pinning_help(void)
 	       "     (default: no pinning)\n", name, name);
 }
 
-int kvm_pick_random_cpu(cpu_set_t *possible_cpus)
-{
-	int target_idx;
-	int nr_cpus;
-	int cpu;
-
-	nr_cpus = CPU_COUNT(possible_cpus);
-	TEST_ASSERT(nr_cpus > 0, "No CPUs available in possible_cpus");
-
-	target_idx = kvm_random_u64(&kvm_rng) % nr_cpus;
-
-	for (cpu = 0; cpu < CPU_SETSIZE; cpu++) {
-		if (CPU_ISSET(cpu, possible_cpus) && target_idx-- == 0)
-			return cpu;
-	}
-	TEST_FAIL("Failed to find random CPU in possible_cpus");
-	return -1;
-}
-
 void kvm_parse_vcpu_pinning(const char *pcpus_string, u32 vcpu_to_pcpu[],
 			    int nr_vcpus)
 {
 	cpu_set_t allowed_mask;
 	char *cpu, *cpu_list;
 	char delim[2] = ",";
-	int i;
+	int i, r;
 
 	cpu_list = strdup(pcpus_string);
 	TEST_ASSERT(cpu_list, "strdup() allocation failed.");
 
-	kvm_sched_getaffinity(0, sizeof(allowed_mask), &allowed_mask);
+	r = sched_getaffinity(0, sizeof(allowed_mask), &allowed_mask);
+	TEST_ASSERT(!r, "sched_getaffinity() failed");
 
 	cpu = strtok(cpu_list, delim);
 
@@ -771,7 +747,8 @@ static void kvm_stats_release(struct kvm_binary_stats *stats)
 		stats->desc = NULL;
 	}
 
-	kvm_free_fd(stats->fd);
+	kvm_close(stats->fd);
+	stats->fd = -1;
 }
 
 __weak void vcpu_arch_free(struct kvm_vcpu *vcpu)
@@ -800,7 +777,7 @@ static void vm_vcpu_rm(struct kvm_vm *vm, struct kvm_vcpu *vcpu)
 
 	kvm_munmap(vcpu->run, vcpu_mmap_sz());
 
-	kvm_free_fd(vcpu->fd);
+	kvm_close(vcpu->fd);
 	kvm_stats_release(&vcpu->stats);
 
 	list_del(&vcpu->list);
@@ -816,8 +793,8 @@ void kvm_vm_release(struct kvm_vm *vmp)
 	list_for_each_entry_safe(vcpu, tmp, &vmp->vcpus, list)
 		vm_vcpu_rm(vmp, vcpu);
 
-	kvm_free_fd(vmp->fd);
-	kvm_free_fd(vmp->kvm_fd);
+	kvm_close(vmp->fd);
+	kvm_close(vmp->kvm_fd);
 
 	/* Free cached stats metadata and close FD */
 	kvm_stats_release(&vmp->stats);
@@ -838,10 +815,10 @@ static void __vm_mem_region_delete(struct kvm_vm *vm,
 	if (region->fd >= 0) {
 		/* There's an extra map when using shared memory. */
 		kvm_munmap(region->mmap_alias, region->mmap_size);
-		kvm_free_fd(region->fd);
+		close(region->fd);
 	}
-	if ((int)region->region.guest_memfd >= 0)
-		kvm_free_fd(region->region.guest_memfd);
+	if (region->region.guest_memfd >= 0)
+		close(region->region.guest_memfd);
 
 	free(region);
 }
@@ -1334,7 +1311,7 @@ static size_t vcpu_mmap_sz(void)
 	TEST_ASSERT(ret >= 0 && ret >= sizeof(struct kvm_run),
 		    KVM_IOCTL_ERROR(KVM_GET_VCPU_MMAP_SIZE, ret));
 
-	kvm_free_fd(dev_fd);
+	close(dev_fd);
 
 	return ret;
 }
@@ -2303,8 +2280,8 @@ void __attribute((constructor)) kvm_selftest_init(void)
 	sigaction(SIGILL, &sig_sa, NULL);
 	sigaction(SIGFPE, &sig_sa, NULL);
 
-	srandom(time(0));
-	kvm_seed_rng(random());
+	guest_random_seed = last_guest_seed = random();
+	pr_info("Random seed: 0x%x\n", guest_random_seed);
 
 	kvm_selftest_arch_init();
 }

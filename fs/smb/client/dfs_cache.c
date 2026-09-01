@@ -122,8 +122,6 @@ static inline void free_tgts(struct cache_entry *ce)
 		kfree(t->name);
 		kfree(t);
 	}
-
-	WRITE_ONCE(ce->tgthint, NULL);
 }
 
 static inline void flush_cache_ent(struct cache_entry *ce)
@@ -365,10 +363,10 @@ static struct cache_dfs_tgt *alloc_target(const char *name, int path_consumed)
 {
 	struct cache_dfs_tgt *t;
 
-	t = kmalloc_obj(*t, GFP_KERNEL);
+	t = kmalloc_obj(*t, GFP_ATOMIC);
 	if (!t)
 		return ERR_PTR(-ENOMEM);
-	t->name = kstrdup(name, GFP_KERNEL);
+	t->name = kstrdup(name, GFP_ATOMIC);
 	if (!t->name) {
 		kfree(t);
 		return ERR_PTR(-ENOMEM);
@@ -628,7 +626,7 @@ static int update_cache_entry_locked(struct cache_entry *ce, const struct dfs_in
 
 	target = READ_ONCE(ce->tgthint);
 	if (target) {
-		th = kstrdup(target->name, GFP_KERNEL);
+		th = kstrdup(target->name, GFP_ATOMIC);
 		if (!th)
 			return -ENOMEM;
 	}
@@ -762,11 +760,11 @@ static int setup_referral(const char *path, struct cache_entry *ce,
 
 	memset(ref, 0, sizeof(*ref));
 
-	ref->path_name = kstrdup(path, GFP_KERNEL);
+	ref->path_name = kstrdup(path, GFP_ATOMIC);
 	if (!ref->path_name)
 		return -ENOMEM;
 
-	ref->node_name = kstrdup(target, GFP_KERNEL);
+	ref->node_name = kstrdup(target, GFP_ATOMIC);
 	if (!ref->node_name) {
 		rc = -ENOMEM;
 		goto err_free_path;
@@ -871,22 +869,13 @@ int dfs_cache_find(const unsigned int xid, struct cifs_ses *ses, const struct nl
 		goto out_free_path;
 	}
 
-	if (ref) {
-		char *target = get_tgt_name(ce);
-
-		if (IS_ERR(target)) {
-			rc = PTR_ERR(target);
-			goto out_unlock;
-		}
-		rc = setup_referral(path, ce, ref, target);
-	} else {
+	if (ref)
+		rc = setup_referral(path, ce, ref, get_tgt_name(ce));
+	else
 		rc = 0;
-	}
-
 	if (!rc && tgt_list)
 		rc = get_targets(ce, tgt_list);
 
-out_unlock:
 	up_read(&htable_rw_lock);
 
 out_free_path:
@@ -926,17 +915,10 @@ int dfs_cache_noreq_find(const char *path, struct dfs_info3_param *ref,
 		goto out_unlock;
 	}
 
-	if (ref) {
-		char *target = get_tgt_name(ce);
-
-		if (IS_ERR(target)) {
-			rc = PTR_ERR(target);
-			goto out_unlock;
-		}
-		rc = setup_referral(path, ce, ref, target);
-	} else {
+	if (ref)
+		rc = setup_referral(path, ce, ref, get_tgt_name(ce));
+	else
 		rc = 0;
-	}
 	if (!rc && tgt_list)
 		rc = get_targets(ce, tgt_list);
 
@@ -977,8 +959,7 @@ void dfs_cache_noreq_update_tgthint(const char *path, const struct dfs_cache_tgt
 
 	t = READ_ONCE(ce->tgthint);
 
-	/* Check 't' in case ce->tgthint was cleared by free_tgts() */
-	if (t && unlikely(!strcasecmp(it->it_name, t->name)))
+	if (unlikely(!strcasecmp(it->it_name, t->name)))
 		goto out_unlock;
 
 	list_for_each_entry(t, &ce->tlist, list) {
@@ -1347,7 +1328,7 @@ int dfs_cache_remount_fs(struct cifs_sb_info *cifs_sb)
 	 * After reconnecting to a different server, unique ids won't match anymore, so we disable
 	 * serverino. This prevents dentry revalidation to think the dentry are stale (ESTALE).
 	 */
-	cifs_autodisable_serverino(cifs_sb, "DFS failover may potentially connect to a different server, inode numbers won't match anymore", 0);
+	cifs_autodisable_serverino(cifs_sb);
 	/*
 	 * Force the use of prefix path to support failover on DFS paths that resolve to targets
 	 * that have different prefix paths.

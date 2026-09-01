@@ -70,11 +70,11 @@ static void _rtw_reg_apply_flags(struct wiphy *wiphy)
 
 	/* channels apply by channel plans. */
 	for (i = 0; i < max_chan_nums; i++) {
-		channel = channel_set[i].channel_num;
+		channel = channel_set[i].ChannelNum;
 		freq = rtw_ieee80211_channel_to_frequency(channel);
 		ch = ieee80211_get_channel(wiphy, freq);
 		if (ch) {
-			if (channel_set[i].scan_type == SCAN_PASSIVE)
+			if (channel_set[i].ScanType == SCAN_PASSIVE)
 				ch->flags = IEEE80211_CHAN_NO_IR;
 			else
 				ch->flags = 0;
@@ -83,19 +83,23 @@ static void _rtw_reg_apply_flags(struct wiphy *wiphy)
 }
 
 static int _rtw_reg_notifier_apply(struct wiphy *wiphy,
-				   struct regulatory_request *request)
+				   struct regulatory_request *request,
+				   struct rtw_regulatory *reg)
 {
 	/* Hard code flags */
 	_rtw_reg_apply_flags(wiphy);
 	return 0;
 }
 
-static const struct ieee80211_regdomain *_rtw_regdomain_select(void)
+static const struct ieee80211_regdomain *_rtw_regdomain_select(struct
+							       rtw_regulatory
+							       *reg)
 {
 	return &rtw_regdom_rd;
 }
 
-static void _rtw_regd_init_wiphy(struct wiphy *wiphy,
+static void _rtw_regd_init_wiphy(struct rtw_regulatory *reg,
+				 struct wiphy *wiphy,
 				 void (*reg_notifier)(struct wiphy *wiphy,
 						      struct
 						      regulatory_request *
@@ -109,7 +113,7 @@ static void _rtw_regd_init_wiphy(struct wiphy *wiphy,
 	wiphy->regulatory_flags &= ~REGULATORY_STRICT_REG;
 	wiphy->regulatory_flags &= ~REGULATORY_DISABLE_BEACON_HINTS;
 
-	regd = _rtw_regdomain_select();
+	regd = _rtw_regdomain_select(reg);
 	wiphy_apply_custom_regulatory(wiphy, regd);
 
 	/* Hard code flags */
@@ -120,10 +124,12 @@ void rtw_regd_init(struct wiphy *wiphy,
 		   void (*reg_notifier)(struct wiphy *wiphy,
 					struct regulatory_request *request))
 {
-	_rtw_regd_init_wiphy(wiphy, reg_notifier);
+	_rtw_regd_init_wiphy(NULL, wiphy, reg_notifier);
 }
 
 void rtw_reg_notifier(struct wiphy *wiphy, struct regulatory_request *request)
 {
-	_rtw_reg_notifier_apply(wiphy, request);
+	struct rtw_regulatory *reg = NULL;
+
+	_rtw_reg_notifier_apply(wiphy, request, reg);
 }

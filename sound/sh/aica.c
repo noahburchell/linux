@@ -518,9 +518,8 @@ static const struct snd_kcontrol_new snd_aica_pcmvolume_control = {
 static int load_aica_firmware(void)
 {
 	int err;
+	const struct firmware *fw_entry;
 	spu_reset();
-
-	const struct firmware *fw_entry __free(firmware) = NULL;
 	err = request_firmware(&fw_entry, "aica_firmware.bin", &pd->dev);
 	if (unlikely(err))
 		return err;
@@ -528,6 +527,7 @@ static int load_aica_firmware(void)
 	spu_disable();
 	spu_memload(0, fw_entry->data, fw_entry->size);
 	spu_enable();
+	release_firmware(fw_entry);
 	return err;
 }
 
@@ -564,9 +564,10 @@ static int snd_aica_probe(struct platform_device *devptr)
 		return -ENOMEM;
 	err = snd_card_new(&devptr->dev, index, SND_AICA_DRIVER,
 			   THIS_MODULE, 0, &dreamcastcard->card);
-	if (unlikely(err < 0))
-		goto free_card;
-
+	if (unlikely(err < 0)) {
+		kfree(dreamcastcard);
+		return err;
+	}
 	strscpy(dreamcastcard->card->driver, "snd_aica");
 	strscpy(dreamcastcard->card->shortname, SND_AICA_DRIVER);
 	strscpy(dreamcastcard->card->longname,
@@ -592,7 +593,6 @@ static int snd_aica_probe(struct platform_device *devptr)
 	return 0;
       freedreamcast:
 	snd_card_free(dreamcastcard->card);
-free_card:
 	kfree(dreamcastcard);
 	return err;
 }

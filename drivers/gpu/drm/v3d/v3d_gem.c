@@ -36,7 +36,14 @@ v3d_init_core(struct v3d_dev *v3d, int core)
 	V3D_CORE_WRITE(core, V3D_CTL_L2TFLEND, ~0);
 }
 
-void
+/* Sets invariant state for the HW. */
+static void
+v3d_init_hw_state(struct v3d_dev *v3d)
+{
+	v3d_init_core(v3d, 0);
+}
+
+static void
 v3d_idle_axi(struct v3d_dev *v3d, int core)
 {
 	if (v3d->ver >= V3D_GEN_71) {
@@ -61,7 +68,7 @@ v3d_idle_axi(struct v3d_dev *v3d, int core)
 	}
 }
 
-void
+static void
 v3d_idle_gca(struct v3d_dev *v3d)
 {
 	if (v3d->ver >= V3D_GEN_41)
@@ -149,8 +156,7 @@ v3d_reset(struct v3d_dev *v3d)
 	v3d_mmu_set_page_table(v3d);
 	v3d_irq_reset(v3d);
 
-	/* Re-arm the global perfmon HW counters that the reset zeroed. */
-	v3d_perfmon_resume(v3d);
+	v3d_perfmon_stop(v3d, v3d->active_perfmon, false);
 
 	trace_v3d_reset_end(dev);
 }
@@ -273,13 +279,6 @@ v3d_invalidate_caches(struct v3d_dev *v3d)
 	v3d_invalidate_slices(v3d, 0);
 }
 
-/* Sets invariant state for the HW. */
-void
-v3d_init_hw_state(struct v3d_dev *v3d)
-{
-	v3d_init_core(v3d, 0);
-}
-
 static void
 v3d_huge_mnt_init(struct v3d_dev *v3d)
 {
@@ -320,7 +319,6 @@ v3d_gem_init(struct drm_device *dev)
 	}
 
 	spin_lock_init(&v3d->mm_lock);
-	spin_lock_init(&v3d->perfmon_state.lock);
 	ret = drmm_mutex_init(dev, &v3d->bo_lock);
 	if (ret)
 		goto err_stats;
@@ -349,6 +347,9 @@ v3d_gem_init(struct drm_device *dev)
 		ret = -ENOMEM;
 		goto err_dma_alloc;
 	}
+
+	v3d_init_hw_state(v3d);
+	v3d_mmu_set_page_table(v3d);
 
 	v3d_huge_mnt_init(v3d);
 
@@ -383,10 +384,7 @@ v3d_gem_destroy(struct drm_device *dev)
 	for (q = 0; q < V3D_MAX_QUEUES; q++) {
 		WARN_ON(v3d->queue[q].active_job);
 		v3d_stats_put(v3d->queue[q].stats);
-		dma_fence_put(v3d->perfmon_state.last_hw_fence[q]);
 	}
-
-	dma_fence_put(v3d->perfmon_state.fence);
 
 	drm_mm_takedown(&v3d->mm);
 

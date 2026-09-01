@@ -599,17 +599,17 @@ static void platform_device_release(struct device *dev)
 	struct platform_object *pa = container_of(dev, struct platform_object,
 						  pdev.dev);
 
-	device_remove_software_node(dev);
-	/*
-	 * If the primary firmware node is a software node, its reference count
-	 * was already decreased by the call to device_remove_software_node().
-	 */
-	if (!is_software_node(dev_fwnode(dev)))
-		fwnode_handle_put(pa->pdev.dev.fwnode);
+	of_node_put(pa->pdev.dev.of_node);
 	kfree(pa->pdev.dev.platform_data);
 	kfree(pa->pdev.mfd_cell);
 	kfree(pa->pdev.resource);
 	kfree(pa);
+}
+
+static void platform_device_release_full(struct device *dev)
+{
+	device_remove_software_node(dev);
+	platform_device_release(dev);
 }
 
 /**
@@ -619,13 +619,6 @@ static void platform_device_release(struct device *dev)
  *
  * Create a platform device object which can have other objects attached
  * to it, and which will have attached objects freed when it is released.
- *
- * The following fields of the dynamically allocated platform device must not
- * be modified manually: resource, num_resources, dev.platform_data,
- * dev.of_node and dev.fwnode. Users wishing to do the split platform device
- * registration with platform_device_alloc() + platform_device_add() are
- * required to use dedicated helpers for adding resources, platform data or
- * assigning firmware nodes.
  */
 struct platform_device *platform_device_alloc(const char *name, int id)
 {
@@ -699,70 +692,6 @@ int platform_device_add_data(struct platform_device *pdev, const void *data,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(platform_device_add_data);
-
-/**
- * platform_device_set_of_node - assign an OF node to device
- * @pdev: platform device to add the node for
- * @np: new device node
- *
- * Assign an OF node to this platform device. Internally keep track of the
- * reference count. Devices created with platform_device_alloc() must use this
- * function instead of assigning the node manually. This function must not be
- * called for a platform device that already has a software node as its primary
- * firmware node assigned.
- */
-void platform_device_set_of_node(struct platform_device *pdev,
-				 struct device_node *np)
-{
-	platform_device_set_fwnode(pdev, of_fwnode_handle(np));
-}
-EXPORT_SYMBOL_GPL(platform_device_set_of_node);
-
-/**
- * platform_device_set_fwnode - assign a firmware node to device
- * @pdev: platform device to set the node for
- * @fwnode: new firmware node
- *
- * Assign a firmware node to this platform device. Internally keep track of the
- * reference count. Devices created with platform_device_alloc() must use this
- * function instead of assigning the node manually. This function must not be
- * called for a platform device that already has a software node as its primary
- * firmware node assigned.
- */
-void platform_device_set_fwnode(struct platform_device *pdev,
-				struct fwnode_handle *fwnode)
-{
-	/*
-	 * If we call this function for a platform device whose primary
-	 * firmware node is a software node, we'll never end up calling the
-	 * symmetric software_node_notify_remove(). There are no users for this
-	 * right now in the tree so just disallow it.
-	 */
-	WARN_ON(is_software_node(dev_fwnode(&pdev->dev)));
-	fwnode_handle_put(pdev->dev.fwnode);
-	device_set_node(&pdev->dev, fwnode_handle_get(fwnode));
-}
-EXPORT_SYMBOL_GPL(platform_device_set_fwnode);
-
-/**
- * platform_device_set_of_node_from_dev - reuse OF node of another device
- * @pdev: platform device to set the node for
- * @dev2: device whose OF node to reuse
- *
- * Reuses the OF node of another device in this platform device while
- * internally keeping track of reference counting. This function must not be
- * called for a platform device that already has a software node as its primary
- * firmware node assigned.
- */
-void platform_device_set_of_node_from_dev(struct platform_device *pdev,
-					  const struct device *dev2)
-{
-	/* See platform_device_set_fwnode(). */
-	WARN_ON(is_software_node(dev_fwnode(&pdev->dev)));
-	device_set_of_node_from_dev(&pdev->dev, dev2);
-	pdev->dev.fwnode = of_fwnode_handle(pdev->dev.of_node);
-}
-EXPORT_SYMBOL_GPL(platform_device_set_of_node_from_dev);
 
 /**
  * platform_device_add - add a platform device to device hierarchy
@@ -939,8 +868,9 @@ struct platform_device *platform_device_register_full(const struct platform_devi
 		return ERR_PTR(-ENOMEM);
 
 	pdev->dev.parent = pdevinfo->parent;
-	device_set_node(&pdev->dev, fwnode_handle_get(pdevinfo->fwnode));
-	dev_assign_of_node_reused(&pdev->dev, pdevinfo->of_node_reused);
+	pdev->dev.fwnode = pdevinfo->fwnode;
+	pdev->dev.of_node = of_node_get(to_of_node(pdev->dev.fwnode));
+	pdev->dev.of_node_reused = pdevinfo->of_node_reused;
 
 	if (pdevinfo->dma_mask) {
 		pdev->platform_dma_mask = pdevinfo->dma_mask;
@@ -960,6 +890,8 @@ struct platform_device *platform_device_register_full(const struct platform_devi
 		ret = device_add_software_node(&pdev->dev, pdevinfo->swnode);
 		if (ret)
 			goto err;
+
+		pdev->dev.release = platform_device_release_full;
 	} else if (pdevinfo->properties) {
 		ret = device_create_managed_software_node(&pdev->dev,
 							  pdevinfo->properties, NULL);
@@ -983,14 +915,11 @@ EXPORT_SYMBOL_GPL(platform_device_register_full);
  * __platform_driver_register - register a driver for platform-level devices
  * @drv: platform driver structure
  * @owner: owning module/driver
- * @mod_name: module name string
  */
-int __platform_driver_register(struct platform_driver *drv, struct module *owner,
-			       const char *mod_name)
+int __platform_driver_register(struct platform_driver *drv, struct module *owner)
 {
 	drv->driver.owner = owner;
 	drv->driver.bus = &platform_bus_type;
-	drv->driver.mod_name = mod_name;
 
 	return driver_register(&drv->driver);
 }
@@ -1023,7 +952,6 @@ static int is_bound_to_driver(struct device *dev, void *driver)
  * @drv: platform driver structure
  * @probe: the driver probe routine, probably from an __init section
  * @module: module which will be the owner of the driver
- * @mod_name: module name string
  *
  * Use this instead of platform_driver_register() when you know the device
  * is not hotpluggable and has already been registered, and you want to
@@ -1041,8 +969,7 @@ static int is_bound_to_driver(struct device *dev, void *driver)
  */
 int __init_or_module __platform_driver_probe(struct platform_driver *drv,
 					     int (*probe)(struct platform_device *),
-					     struct module *module,
-					     const char *mod_name)
+					     struct module *module)
 {
 	int retval;
 
@@ -1070,7 +997,7 @@ int __init_or_module __platform_driver_probe(struct platform_driver *drv,
 
 	/* temporary section violation during probe() */
 	drv->probe = probe;
-	retval = __platform_driver_register(drv, module, mod_name);
+	retval = __platform_driver_register(drv, module);
 	if (retval)
 		return retval;
 
@@ -1098,7 +1025,6 @@ EXPORT_SYMBOL_GPL(__platform_driver_probe);
  * @data: platform specific data for this platform device
  * @size: size of platform specific data
  * @module: module which will be the owner of the driver
- * @mod_name: module name string
  *
  * Use this in legacy-style modules that probe hardware directly and
  * register a single platform device and corresponding platform driver.
@@ -1109,7 +1035,7 @@ struct platform_device * __init_or_module
 __platform_create_bundle(struct platform_driver *driver,
 			 int (*probe)(struct platform_device *),
 			 struct resource *res, unsigned int n_res,
-			 const void *data, size_t size, struct module *module, const char *mod_name)
+			 const void *data, size_t size, struct module *module)
 {
 	struct platform_device *pdev;
 	int error;
@@ -1132,7 +1058,7 @@ __platform_create_bundle(struct platform_driver *driver,
 	if (error)
 		goto err_pdev_put;
 
-	error = __platform_driver_probe(driver, probe, module, mod_name);
+	error = __platform_driver_probe(driver, probe, module);
 	if (error)
 		goto err_pdev_del;
 
@@ -1152,7 +1078,6 @@ EXPORT_SYMBOL_GPL(__platform_create_bundle);
  * @drivers: an array of drivers to register
  * @count: the number of drivers to register
  * @owner: module owning the drivers
- * @mod_name: module name string
  *
  * Registers platform drivers specified by an array. On failure to register a
  * driver, all previously registered drivers will be unregistered. Callers of
@@ -1162,7 +1087,7 @@ EXPORT_SYMBOL_GPL(__platform_create_bundle);
  * Returns: 0 on success or a negative error code on failure.
  */
 int __platform_register_drivers(struct platform_driver * const *drivers,
-				unsigned int count, struct module *owner, const char *mod_name)
+				unsigned int count, struct module *owner)
 {
 	unsigned int i;
 	int err;
@@ -1170,7 +1095,7 @@ int __platform_register_drivers(struct platform_driver * const *drivers,
 	for (i = 0; i < count; i++) {
 		pr_debug("registering platform driver %ps\n", drivers[i]);
 
-		err = __platform_driver_register(drivers[i], owner, mod_name);
+		err = __platform_driver_register(drivers[i], owner);
 		if (err < 0) {
 			pr_err("failed to register platform driver %ps: %d\n",
 			       drivers[i], err);

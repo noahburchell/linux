@@ -2585,6 +2585,12 @@ static int rvu_mbox_init(struct rvu *rvu, struct mbox_wq_info *mw,
 	if (!pf_bmap)
 		return -ENOMEM;
 
+	ng_rvu_mbox = kzalloc_obj(*ng_rvu_mbox);
+	if (!ng_rvu_mbox) {
+		err = -ENOMEM;
+		goto free_bitmap;
+	}
+
 	/* RVU VFs */
 	if (type == TYPE_AFVF)
 		bitmap_set(pf_bmap, 0, num);
@@ -2598,22 +2604,15 @@ static int rvu_mbox_init(struct rvu *rvu, struct mbox_wq_info *mw,
 		}
 	}
 
-	if (!rvu->ng_rvu) {
-		ng_rvu_mbox = devm_kzalloc(rvu->dev, sizeof(*ng_rvu_mbox), GFP_KERNEL);
-		if (!ng_rvu_mbox) {
-			err = -ENOMEM;
-			goto free_bitmap;
-		}
+	rvu->ng_rvu = ng_rvu_mbox;
 
-		rvu->ng_rvu = ng_rvu_mbox;
-
-		rvu->ng_rvu->rvu_mbox_ops = &rvu_mbox_ops;
-		mutex_init(&rvu->mbox_lock);
-	}
+	rvu->ng_rvu->rvu_mbox_ops = &rvu_mbox_ops;
 
 	err = cn20k_rvu_mbox_init(rvu, type, num);
 	if (err)
-		goto free_bitmap;
+		goto free_mem;
+
+	mutex_init(&rvu->mbox_lock);
 
 	mbox_regions = kcalloc(num, sizeof(void __iomem *), GFP_KERNEL);
 	if (!mbox_regions) {
@@ -2703,16 +2702,12 @@ unmap_regions:
 free_regions:
 	kfree(mbox_regions);
 free_qmem:
-	cn20k_free_mbox_memory_type(rvu, type);
+	cn20k_free_mbox_memory(rvu);
+free_mem:
+	kfree(rvu->ng_rvu);
 free_bitmap:
 	bitmap_free(pf_bmap);
 	return err;
-}
-
-static void rvu_free_cn20k_mbox_memory(struct rvu *rvu)
-{
-	if (is_cn20k(rvu->pdev))
-		cn20k_free_mbox_memory(rvu);
 }
 
 static void rvu_mbox_destroy(struct mbox_wq_info *mw)
@@ -3336,8 +3331,8 @@ static int rvu_register_interrupts(struct rvu *rvu)
 		goto fail;
 
 	for (i = 0; i < rvu->num_vec; i++) {
-		if (strnstr(&rvu->irq_name[i * NAME_SIZE], "Mbox", NAME_SIZE) ||
-		    strnstr(&rvu->irq_name[i * NAME_SIZE], "FLR", NAME_SIZE))
+		if (strstr(&rvu->irq_name[i * NAME_SIZE], "Mbox") ||
+		    strstr(&rvu->irq_name[i * NAME_SIZE], "FLR"))
 			irq_set_affinity(pci_irq_vector(rvu->pdev, i),
 					 cpumask_of(0));
 	}
@@ -3524,7 +3519,6 @@ static int rvu_enable_sriov(struct rvu *rvu)
 	if (err) {
 		rvu_disable_afvf_intr(rvu);
 		rvu_mbox_destroy(&rvu->afvf_wq_info);
-		cn20k_free_mbox_memory_type(rvu, TYPE_AFVF);
 		return err;
 	}
 
@@ -3548,29 +3542,19 @@ static void rvu_update_module_params(struct rvu *rvu)
 		kpu_profile ? kpu_profile : default_pfl_name, KPU_NAME_LEN);
 }
 
-static atomic_t device_bound = ATOMIC_INIT(0);
-
 static int rvu_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct device *dev = &pdev->dev;
 	struct rvu *rvu;
 	int    err;
 
-	if (atomic_cmpxchg(&device_bound, 0, 1) != 0) {
-		dev_warn(dev, "Only one af device is supported.\n");
-		return -EBUSY;
-	}
-
 	rvu = devm_kzalloc(dev, sizeof(*rvu), GFP_KERNEL);
-	if (!rvu) {
-		atomic_set(&device_bound, 0);
+	if (!rvu)
 		return -ENOMEM;
-	}
 
 	rvu->hw = devm_kzalloc(dev, sizeof(struct rvu_hwinfo), GFP_KERNEL);
 	if (!rvu->hw) {
 		devm_kfree(dev, rvu);
-		atomic_set(&device_bound, 0);
 		return -ENOMEM;
 	}
 
@@ -3687,7 +3671,6 @@ err_flr:
 err_mbox:
 	rvu_mbox_destroy(&rvu->afpf_wq_info);
 err_hwsetup:
-	rvu_free_cn20k_mbox_memory(rvu);
 	rvu_cgx_exit(rvu);
 	rvu_fwdata_exit(rvu);
 	rvu_mcs_exit(rvu);
@@ -3704,7 +3687,6 @@ err_freemem:
 	pci_set_drvdata(pdev, NULL);
 	devm_kfree(&pdev->dev, rvu->hw);
 	devm_kfree(dev, rvu);
-	atomic_set(&device_bound, 0);
 	return err;
 }
 
@@ -3730,9 +3712,10 @@ static void rvu_remove(struct pci_dev *pdev)
 	pci_set_drvdata(pdev, NULL);
 
 	devm_kfree(&pdev->dev, rvu->hw);
-	rvu_free_cn20k_mbox_memory(rvu);
+	if (is_cn20k(rvu->pdev))
+		cn20k_free_mbox_memory(rvu);
+	kfree(rvu->ng_rvu);
 	devm_kfree(&pdev->dev, rvu);
-	atomic_set(&device_bound, 0);
 }
 
 static void rvu_shutdown(struct pci_dev *pdev)

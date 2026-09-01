@@ -20,11 +20,10 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kvm_host.h>
-#include "regs.h"
+#include "kvm_cache_regs.h"
 #include "kvm_emulate.h"
 #include <linux/stringify.h>
 #include <asm/debugreg.h>
-#include <asm/insn-eval.h>
 #include <asm/nospec-branch.h>
 #include <asm/ibt.h>
 #include <asm/text-patching.h>
@@ -440,6 +439,25 @@ static void assign_masked(ulong *dest, ulong src, ulong mask)
 	*dest = (*dest & ~mask) | (src & mask);
 }
 
+static void assign_register(unsigned long *reg, u64 val, int bytes)
+{
+	/* The 4-byte case *is* correct: in 64-bit mode we zero-extend. */
+	switch (bytes) {
+	case 1:
+		*(u8 *)reg = (u8)val;
+		break;
+	case 2:
+		*(u16 *)reg = (u16)val;
+		break;
+	case 4:
+		*reg = (u32)val;
+		break;	/* 64b: zero-extend */
+	case 8:
+		*reg = val;
+		break;
+	}
+}
+
 static inline unsigned long ad_mask(struct x86_emulate_ctxt *ctxt)
 {
 	return (1UL << (ctxt->ad_bytes << 3)) - 1;
@@ -487,7 +505,7 @@ register_address_increment(struct x86_emulate_ctxt *ctxt, int reg, int inc)
 {
 	ulong *preg = reg_rmw(ctxt, reg);
 
-	insn_assign_reg(preg, *preg + inc, ctxt->ad_bytes);
+	assign_register(preg, *preg + inc, ctxt->ad_bytes);
 }
 
 static void rsp_increment(struct x86_emulate_ctxt *ctxt, int inc)
@@ -522,9 +540,8 @@ static int emulate_exception(struct x86_emulate_ctxt *ctxt, int vec,
 	return X86EMUL_PROPAGATE_FAULT;
 }
 
-static int emulate_db(struct x86_emulate_ctxt *ctxt, unsigned long dr6)
+static int emulate_db(struct x86_emulate_ctxt *ctxt)
 {
-	ctxt->exception.dr6 = dr6;
 	return emulate_exception(ctxt, DB_VECTOR, 0, false);
 }
 
@@ -1749,7 +1766,7 @@ static int load_segment_descriptor(struct x86_emulate_ctxt *ctxt,
 
 static void write_register_operand(struct operand *op)
 {
-	return insn_assign_reg(op->addr.reg, op->val, op->bytes);
+	return assign_register(op->addr.reg, op->val, op->bytes);
 }
 
 static int writeback(struct x86_emulate_ctxt *ctxt, struct operand *op)
@@ -1990,7 +2007,7 @@ static int em_popa(struct x86_emulate_ctxt *ctxt)
 		rc = emulate_pop(ctxt, &val, ctxt->op_bytes);
 		if (rc != X86EMUL_CONTINUE)
 			break;
-		insn_assign_reg(reg_rmw(ctxt, reg), val, ctxt->op_bytes);
+		assign_register(reg_rmw(ctxt, reg), val, ctxt->op_bytes);
 		--reg;
 	}
 	return rc;
@@ -3280,12 +3297,8 @@ static int em_dr_write(struct x86_emulate_ctxt *ctxt)
 	else
 		val = ctxt->src.val & ~0U;
 
-	/*
-	 * A #GP due to an illegal value should be impossible at this point, as
-	 * such #GPs have priority over MOV DR intercepts on SVM, i.e. KVM must
-	 * manually check the value *before* emulating the write.
-	 */
-	if (WARN_ON_ONCE(ctxt->ops->set_dr(ctxt, ctxt->modrm_reg, val)))
+	/* #UD condition is already handled. */
+	if (ctxt->ops->set_dr(ctxt, ctxt->modrm_reg, val) < 0)
 		return emulate_gp(ctxt, 0);
 
 	/* Disable writeback. */
@@ -3580,8 +3593,12 @@ static int em_sti(struct x86_emulate_ctxt *ctxt)
 static int em_cpuid(struct x86_emulate_ctxt *ctxt)
 {
 	u32 eax, ebx, ecx, edx;
+	u64 msr = 0;
 
-	if (!ctxt->ops->is_cpuid_allowed(ctxt))
+	ctxt->ops->get_msr(ctxt, MSR_MISC_FEATURES_ENABLES, &msr);
+	if (!ctxt->ops->is_smm(ctxt) &&
+	    (msr & MSR_MISC_FEATURES_ENABLES_CPUID_FAULT) &&
+	    ctxt->ops->cpl(ctxt))
 		return emulate_gp(ctxt, 0);
 
 	eax = reg_read(ctxt, VCPU_REGS_RAX);
@@ -3820,24 +3837,25 @@ static int check_cr_access(struct x86_emulate_ctxt *ctxt)
 
 static int check_dr_read(struct x86_emulate_ctxt *ctxt)
 {
-	bool is_intel = ctxt->ops->guest_cpuid_is_intel_compatible(ctxt);
 	int dr = ctxt->modrm_reg;
+	u64 cr4;
 
 	if (dr > 7)
 		return emulate_ud(ctxt);
 
-	if ((dr == 4 || dr == 5) && (ctxt->ops->get_cr(ctxt, 4) & X86_CR4_DE))
+	cr4 = ctxt->ops->get_cr(ctxt, 4);
+	if ((cr4 & X86_CR4_DE) && (dr == 4 || dr == 5))
 		return emulate_ud(ctxt);
 
-	/* Intel CPUs prioritize the DR7.GD=1 #DB over the CPL>0 #GP. */
-	if (!is_intel && ctxt->ops->cpl(ctxt))
-		return emulate_gp(ctxt, 0);
+	if (ctxt->ops->get_dr(ctxt, 7) & DR7_GD) {
+		ulong dr6;
 
-	if (ctxt->ops->get_effective_dr7(ctxt) & DR7_GD)
-		return emulate_db(ctxt, DR6_BD);
-
-	if (is_intel && ctxt->ops->cpl(ctxt))
-		return emulate_gp(ctxt, 0);
+		dr6 = ctxt->ops->get_dr(ctxt, 6);
+		dr6 &= ~DR_TRAP_BITS;
+		dr6 |= DR6_BD | DR6_ACTIVE_LOW;
+		ctxt->ops->set_dr(ctxt, 6, dr6);
+		return emulate_db(ctxt);
+	}
 
 	return X86EMUL_CONTINUE;
 }
@@ -3845,28 +3863,12 @@ static int check_dr_read(struct x86_emulate_ctxt *ctxt)
 static int check_dr_write(struct x86_emulate_ctxt *ctxt)
 {
 	u64 new_val = ctxt->src.val64;
-	int rc;
+	int dr = ctxt->modrm_reg;
 
-	rc = check_dr_read(ctxt);
-	if (rc != X86EMUL_CONTINUE)
-		return rc;
+	if ((dr == 6 || dr == 7) && (new_val & 0xffffffff00000000ULL))
+		return emulate_gp(ctxt, 0);
 
-	switch (ctxt->modrm_reg) {
-	case 4:
-	case 6:
-		if (!kvm_dr6_valid(new_val))
-			return emulate_gp(ctxt, 0);
-		break;
-	case 5:
-	case 7:
-		if (!kvm_dr7_valid(new_val))
-			return emulate_gp(ctxt, 0);
-		break;
-	default:
-		break;
-	}
-
-	return X86EMUL_CONTINUE;
+	return check_dr_read(ctxt);
 }
 
 static int check_svme(struct x86_emulate_ctxt *ctxt)
@@ -4375,10 +4377,11 @@ static const struct opcode twobyte_table[256] = {
 	D(ImplicitOps | ModRM | SrcMem | NoAccess), /* NOP + 7 * reserved NOP */
 	/* 0x20 - 0x2F */
 	DIP(ModRM | DstMem | Priv | Op3264 | NoMod, cr_read, check_cr_access),
-	DIP(ModRM | DstMem | Op3264 | NoMod, dr_read, check_dr_read),
+	DIP(ModRM | DstMem | Priv | Op3264 | NoMod, dr_read, check_dr_read),
 	IIP(ModRM | SrcMem | Priv | Op3264 | NoMod, em_cr_write, cr_write,
 						check_cr_access),
-	IIP(ModRM | SrcMem | Op3264 | NoMod, em_dr_write, dr_write, check_dr_write),
+	IIP(ModRM | SrcMem | Priv | Op3264 | NoMod, em_dr_write, dr_write,
+						check_dr_write),
 	N, N, N, N,
 	GP(ModRM | DstReg | SrcMem | Mov | Sse | Avx, &pfx_0f_28_0f_29),
 	GP(ModRM | DstMem | SrcReg | Mov | Sse | Avx, &pfx_0f_28_0f_29),

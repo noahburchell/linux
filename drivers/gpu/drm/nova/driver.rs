@@ -2,10 +2,7 @@
 
 use kernel::{
     auxiliary,
-    device::{
-        Core,
-        DeviceContext, //
-    },
+    device::Core,
     drm::{
         self,
         gem,
@@ -18,30 +15,33 @@ use kernel::{
 use crate::file::File;
 use crate::gem::NovaObject;
 
-pub(crate) struct NovaDriver;
-
-pub(crate) struct Nova<'bound> {
+pub(crate) struct NovaDriver {
     #[expect(unused)]
-    drm: ARef<drm::Device<NovaDriver>>,
-    _reg: drm::Registration<'bound, NovaDriver>,
+    drm: ARef<drm::Device<Self>>,
 }
 
 /// Convienence type alias for the DRM device type for this driver
-pub(crate) type NovaDevice<Ctx = drm::Normal> = drm::Device<NovaDriver, Ctx>;
+pub(crate) type NovaDevice = drm::Device<NovaDriver>;
+
+#[pin_data]
+pub(crate) struct NovaData {
+    pub(crate) adev: ARef<auxiliary::Device>,
+}
 
 const INFO: drm::DriverInfo = drm::DriverInfo {
     major: 0,
     minor: 0,
     patchlevel: 0,
-    name: c"nova-drm",
-    desc: c"NVIDIA Graphics and Compute",
+    name: c"nova",
+    desc: c"Nvidia Graphics",
 };
 
-const NOVA_CORE_MODULE_NAME: &CStr = c"nova-core";
+const NOVA_CORE_MODULE_NAME: &CStr = c"NovaCore";
 const AUXILIARY_NAME: &CStr = c"nova-drm";
 
 kernel::auxiliary_device_table!(
     AUX_TABLE,
+    MODULE_AUX_TABLE,
     <NovaDriver as auxiliary::Driver>::IdInfo,
     [(
         auxiliary::DeviceId::new(NOVA_CORE_MODULE_NAME, AUXILIARY_NAME),
@@ -51,32 +51,23 @@ kernel::auxiliary_device_table!(
 
 impl auxiliary::Driver for NovaDriver {
     type IdInfo = ();
-    type Data<'bound> = Nova<'bound>;
     const ID_TABLE: auxiliary::IdTable<Self::IdInfo> = &AUX_TABLE;
 
-    fn probe<'bound>(
-        adev: &'bound auxiliary::Device<Core<'_>>,
-        _info: &'bound Self::IdInfo,
-    ) -> impl PinInit<Self::Data<'bound>, Error> + 'bound {
-        let drm = drm::UnregisteredDevice::<Self>::new(adev, Ok(()))?;
-        // SAFETY: `reg` is stored in `Nova` and dropped when the driver is unbound; it is
-        // never forgotten.
-        let reg = unsafe { drm::Registration::new(adev.as_ref(), drm, (), 0)? };
+    fn probe(adev: &auxiliary::Device<Core>, _info: &Self::IdInfo) -> impl PinInit<Self, Error> {
+        let data = try_pin_init!(NovaData { adev: adev.into() });
 
-        Ok(Nova {
-            drm: reg.device().into(),
-            _reg: reg,
-        })
+        let drm = drm::Device::<Self>::new(adev.as_ref(), data)?;
+        drm::Registration::new_foreign_owned(&drm, adev.as_ref(), 0)?;
+
+        Ok(Self { drm })
     }
 }
 
 #[vtable]
 impl drm::Driver for NovaDriver {
-    type Data = ();
-    type RegistrationData<'a> = ();
+    type Data = NovaData;
     type File = File;
     type Object = gem::Object<NovaObject>;
-    type ParentDevice<Ctx: DeviceContext> = auxiliary::Device<Ctx>;
 
     const INFO: drm::DriverInfo = INFO;
 

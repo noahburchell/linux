@@ -726,12 +726,14 @@ int media_entity_pads_init(struct media_entity *entity, u16 num_pads,
  * the entity (currently, it does nothing).
  *
  * Calling media_entity_cleanup() on a media_entity whose memory has been
- * zeroed but that has not been initialized with media_entity_pads_init() is
+ * zeroed but that has not been initialized with media_entity_pad_init() is
  * valid and is a no-op.
  */
-static inline void media_entity_cleanup(struct media_entity *entity)
-{
-}
+#if IS_ENABLED(CONFIG_MEDIA_CONTROLLER)
+static inline void media_entity_cleanup(struct media_entity *entity) {}
+#else
+#define media_entity_cleanup(entity) do { } while (false)
+#endif
 
 /**
  * media_get_pad_index() - retrieves a pad index from an entity
@@ -1387,7 +1389,6 @@ void media_remove_intf_links(struct media_interface *intf);
  * @entity: entity where the @operation will be called
  * @operation: type of the operation. Should be the name of a member of
  *	struct &media_entity_operations.
- * @args: arguments for the operation.
  *
  * This helper function will check if @operation is not %NULL. On such case,
  * it will issue a call to @operation\(@entity, @args\).

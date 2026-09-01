@@ -341,7 +341,7 @@ static int swsusp_swap_check(void)
 	 * This is called before saving the image.
 	 */
 	if (swsusp_resume_device)
-		res = find_hibernation_swap_type(swsusp_resume_device, swsusp_resume_block);
+		res = swap_type_of(swsusp_resume_device, swsusp_resume_block);
 	else
 		res = find_first_swap(&swsusp_resume_device);
 	if (res < 0)
@@ -430,22 +430,19 @@ static int swap_write_page(struct swap_map_handle *handle, void *buf,
 
 	if (!handle->cur)
 		return -EINVAL;
-
-	/*
-	 * If the current map page is full, allocate and link next one first.
-	 * Delaying this until here avoids writing an empty swap map page when
-	 * the image size is an exact MAP_PAGE_ENTRIES multiple.
-	 */
+	offset = alloc_swapdev_block(root_swap);
+	error = write_page(buf, offset, hb);
+	if (error)
+		return error;
+	handle->cur->entries[handle->k++] = offset;
 	if (handle->k >= MAP_PAGE_ENTRIES) {
 		offset = alloc_swapdev_block(root_swap);
 		if (!offset)
 			return -ENOSPC;
-
 		handle->cur->next_swap = offset;
 		error = write_page(handle->cur, handle->cur_swap, hb);
 		if (error)
-			return error;
-
+			goto out;
 		clear_page(handle->cur);
 		handle->cur_swap = offset;
 		handle->k = 0;
@@ -453,7 +450,7 @@ static int swap_write_page(struct swap_map_handle *handle, void *buf,
 		if (hb && low_free_pages() <= handle->reqd_free_pages) {
 			error = hib_wait_io(hb);
 			if (error)
-				return error;
+				goto out;
 			/*
 			 * Recalculate the number of required free pages, to
 			 * make sure we never take more than half.
@@ -461,21 +458,14 @@ static int swap_write_page(struct swap_map_handle *handle, void *buf,
 			handle->reqd_free_pages = reqd_free_pages();
 		}
 	}
-
-	offset = alloc_swapdev_block(root_swap);
-	error = write_page(buf, offset, hb);
-	if (error)
-		return error;
-	handle->cur->entries[handle->k++] = offset;
-	return 0;
+ out:
+	return error;
 }
 
 static int flush_swap_writer(struct swap_map_handle *handle)
 {
-	if (handle->cur && handle->cur_swap && handle->k)
+	if (handle->cur && handle->cur_swap)
 		return write_page(handle->cur, handle->cur_swap, NULL);
-	else if (handle->cur && handle->cur_swap)
-		return 0;
 	else
 		return -EINVAL;
 }
@@ -580,23 +570,29 @@ struct crc_data {
 	wait_queue_head_t done;                   /* crc update done */
 	u32 *crc32;                               /* points to handle's crc32 */
 	size_t **unc_len;			  /* uncompressed lengths */
-	unsigned char *unc[];			  /* uncompressed data */
+	unsigned char **unc;			  /* uncompressed data */
 };
 
 static struct crc_data *alloc_crc_data(int nr_threads)
 {
 	struct crc_data *crc;
 
-	crc = kzalloc_flex(*crc, unc, nr_threads);
+	crc = kzalloc_obj(*crc);
 	if (!crc)
 		return NULL;
 
+	crc->unc = kcalloc(nr_threads, sizeof(*crc->unc), GFP_KERNEL);
+	if (!crc->unc)
+		goto err_free_crc;
+
 	crc->unc_len = kzalloc_objs(*crc->unc_len, nr_threads);
 	if (!crc->unc_len)
-		goto err_free_crc;
+		goto err_free_unc;
 
 	return crc;
 
+err_free_unc:
+	kfree(crc->unc);
 err_free_crc:
 	kfree(crc);
 	return NULL;
@@ -611,6 +607,7 @@ static void free_crc_data(struct crc_data *crc)
 		kthread_stop(crc->thr);
 
 	kfree(crc->unc_len);
+	kfree(crc->unc);
 	kfree(crc);
 }
 
@@ -749,7 +746,7 @@ static int save_compressed_image(struct swap_map_handle *handle,
 
 		data[thr].cc = crypto_alloc_acomp(hib_comp_algo, 0, CRYPTO_ALG_ASYNC);
 		if (IS_ERR_OR_NULL(data[thr].cc)) {
-			pr_err("Could not allocate comp stream %pe\n", data[thr].cc);
+			pr_err("Could not allocate comp stream %ld\n", PTR_ERR(data[thr].cc));
 			ret = -EFAULT;
 			goto out_clean;
 		}
@@ -1253,7 +1250,7 @@ static int load_compressed_image(struct swap_map_handle *handle,
 
 		data[thr].cc = crypto_alloc_acomp(hib_comp_algo, 0, CRYPTO_ALG_ASYNC);
 		if (IS_ERR_OR_NULL(data[thr].cc)) {
-			pr_err("Could not allocate comp stream %pe\n", data[thr].cc);
+			pr_err("Could not allocate comp stream %ld\n", PTR_ERR(data[thr].cc));
 			ret = -EFAULT;
 			goto out_clean;
 		}

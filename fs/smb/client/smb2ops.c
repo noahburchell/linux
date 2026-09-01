@@ -1569,7 +1569,7 @@ SMB2_request_res_key(const unsigned int xid, struct cifs_tcon *tcon,
 	memcpy(pcchunk->SourceKey, res_key->ResumeKey, COPY_CHUNK_RES_KEY_SIZE);
 
 req_res_key_exit:
-	kfree_sensitive(res_key);
+	kfree(res_key);
 	return rc;
 }
 
@@ -2193,14 +2193,10 @@ smb2_duplicate_extents(const unsigned int xid,
 			u64 len, u64 dest_off)
 {
 	int rc;
-	int qrc;
 	unsigned int ret_data_len;
 	struct inode *inode;
-	struct smb2_file_all_info file_inf;
 	struct duplicate_extents_to_file dup_ext_buf;
-	struct timespec64 ts;
 	struct cifs_tcon *tcon = tlink_tcon(trgtfile->tlink);
-	u64 asize;
 
 	/* server fileays advertise duplicate extent support with this flag */
 	if ((le32_to_cpu(tcon->fsAttrInfo.Attributes) &
@@ -2222,7 +2218,8 @@ smb2_duplicate_extents(const unsigned int xid,
 		rc = smb2_set_file_size(xid, tcon, trgtfile, dest_off + len, false);
 		if (rc)
 			goto duplicate_extents_out;
-		cifs_resize_file_locked(inode, dest_off + len);
+		netfs_resize_file(netfs_inode(inode), dest_off + len, true);
+		cifs_setsize(inode, dest_off + len);
 	}
 	rc = SMB2_ioctl(xid, tcon, trgtfile->fid.persistent_fid,
 			trgtfile->fid.volatile_fid,
@@ -2234,32 +2231,6 @@ smb2_duplicate_extents(const unsigned int xid,
 
 	if (ret_data_len > 0)
 		cifs_dbg(FYI, "Non-zero response length in duplicate extents\n");
-
-	if (rc == 0) {
-		qrc = SMB2_query_info(xid, tcon, trgtfile->fid.persistent_fid,
-				      trgtfile->fid.volatile_fid, &file_inf);
-		spin_lock(&inode->i_lock);
-		if (qrc == 0) {
-			asize = le64_to_cpu(file_inf.AllocationSize);
-			CIFS_I(inode)->time = jiffies;
-			if (file_inf.LastWriteTime) {
-				ts = cifs_NTtimeToUnix(file_inf.LastWriteTime);
-				inode_set_mtime_to_ts(inode, ts);
-			}
-			if (file_inf.ChangeTime) {
-				ts = cifs_NTtimeToUnix(file_inf.ChangeTime);
-				inode_set_ctime_to_ts(inode, ts);
-			}
-			if (file_inf.LastAccessTime) {
-				ts = cifs_NTtimeToUnix(file_inf.LastAccessTime);
-				inode_set_atime_to_ts(inode, ts);
-			}
-			inode->i_blocks = CIFS_INO_BLOCKS(asize);
-		} else {
-			CIFS_I(inode)->time = 0; /* force reval */
-		}
-		spin_unlock(&inode->i_lock);
-	}
 
 duplicate_extents_out:
 	if (rc)
@@ -2276,10 +2247,10 @@ duplicate_extents_out:
 
 static int
 smb2_set_compression(const unsigned int xid, struct cifs_tcon *tcon,
-		   struct cifsFileInfo *cfile, __u16 compression_state)
+		   struct cifsFileInfo *cfile)
 {
 	return SMB2_set_compression(xid, tcon, cfile->fid.persistent_fid,
-			    cfile->fid.volatile_fid, compression_state);
+			    cfile->fid.volatile_fid);
 }
 
 static int
@@ -3519,15 +3490,6 @@ static long smb3_punch_hole(struct file *file, struct cifs_tcon *tcon,
 
 	filemap_invalidate_lock(inode->i_mapping);
 	/*
-	 * Flush dirty data first, otherwise a dirty folio spanning the punched
-	 * range may be written back after the ioctl and refill the hole.
-	 */
-	rc = filemap_write_and_wait_range(inode->i_mapping, offset,
-					  offset + len - 1);
-	if (rc < 0)
-		goto unlock;
-
-	/*
 	 * We implement the punch hole through ioctl, so we need remove the page
 	 * caches first, otherwise the data may be inconsistent with the server.
 	 */
@@ -3581,7 +3543,7 @@ static int smb3_simple_fallocate_write_range(unsigned int xid,
 					     char *buf)
 {
 	struct cifs_io_parms io_parms = {0};
-	unsigned int nbytes;
+	int nbytes;
 	int rc = 0;
 	struct kvec iov[2];
 
@@ -3602,10 +3564,9 @@ static int smb3_simple_fallocate_write_range(unsigned int xid,
 		rc = SMB2_write(xid, &io_parms, &nbytes, iov, 1);
 		if (rc)
 			break;
-		if (!nbytes)
-			return -EIO;
 		if (nbytes > len)
 			return -EINVAL;
+		buf += nbytes;
 		off += nbytes;
 		len -= nbytes;
 	}
@@ -3618,24 +3579,11 @@ static int smb3_simple_fallocate_range(unsigned int xid,
 				       loff_t off, loff_t len)
 {
 	struct file_allocated_range_buffer in_data, *out_data = NULL, *tmp_data;
-	struct inode *inode = d_inode(cfile->dentry);
 	u32 out_data_len;
 	char *buf = NULL;
 	u64 range_start, range_len, range_end;
 	loff_t l;
 	int rc;
-
-	buf = kvzalloc(min_t(loff_t, len, SMB2_MAX_BUFFER_SIZE), GFP_KERNEL);
-	if (!buf) {
-		rc = -ENOMEM;
-		goto out;
-	}
-
-	if (off >= i_size_read(inode)) {
-		rc = smb3_simple_fallocate_write_range(xid, tcon, cfile,
-						       off, len, buf);
-		goto out;
-	}
 
 	in_data.file_offset = cpu_to_le64(off);
 	in_data.length = cpu_to_le64(len);
@@ -3647,6 +3595,12 @@ static int smb3_simple_fallocate_range(unsigned int xid,
 			(char **)&out_data, &out_data_len);
 	if (rc)
 		goto out;
+
+	buf = kvzalloc(1024 * 1024, GFP_KERNEL);
+	if (buf == NULL) {
+		rc = -ENOMEM;
+		goto out;
+	}
 
 	tmp_data = out_data;
 	while (len) {
@@ -3722,22 +3676,18 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 	struct cifsFileInfo *cfile = file->private_data;
 	long rc = -EOPNOTSUPP;
 	unsigned int xid;
-	loff_t old_eof, new_eof;
-	struct smb2_file_all_info file_inf;
-	u64 asize;
-	int qrc;
+	loff_t new_eof;
 
 	xid = get_xid();
 
 	inode = d_inode(cfile->dentry);
 	cifsi = CIFS_I(inode);
-	old_eof = i_size_read(inode);
 
 	trace_smb3_falloc_enter(xid, cfile->fid.persistent_fid, tcon->tid,
 				tcon->ses->Suid, off, len);
 	/* if file not oplocked can't be sure whether asking to extend size */
 	if (!CIFS_CACHE_READ(cifsi))
-		if (!keep_size) {
+		if (keep_size == false) {
 			trace_smb3_falloc_err(xid, cfile->fid.persistent_fid,
 				tcon->tid, tcon->ses->Suid, off, len, rc);
 			free_xid(xid);
@@ -3747,96 +3697,21 @@ static long smb3_simple_falloc(struct file *file, struct cifs_tcon *tcon,
 	/*
 	 * Extending the file
 	 */
-	if (!keep_size && old_eof < off + len) {
+	if ((keep_size == false) && i_size_read(inode) < off + len) {
 		rc = inode_newsize_ok(inode, off + len);
 		if (rc)
 			goto out;
-
-		/*
-		 * A small range at or beyond EOF can be allocated by writing
-		 * zeroes.  For off > old_eof, this preserves the intervening
-		 * hole instead of allocating from offset 0.
-		 */
-		if (off > old_eof ||
-		    (off == old_eof && old_eof != 0 &&
-		     (cifsi->cifsAttrs & FILE_ATTRIBUTE_SPARSE_FILE))) {
-			if (len > 1024 * 1024) {
-				rc = -EOPNOTSUPP;
-				goto out;
-			}
-
-			rc = smb3_simple_fallocate_range(xid, tcon, cfile,
-							 off, len);
-			if (rc) {
-				spin_lock(&inode->i_lock);
-				cifsi->time = 0;
-				spin_unlock(&inode->i_lock);
-				goto out;
-			}
-
-			new_eof = off + len;
-			cifs_resize_file_locked(inode, new_eof);
-
-			qrc = SMB2_query_info(xid, tcon,
-					      cfile->fid.persistent_fid,
-					      cfile->fid.volatile_fid, &file_inf);
-			spin_lock(&inode->i_lock);
-			if (qrc == 0) {
-				asize = le64_to_cpu(file_inf.AllocationSize);
-				inode->i_blocks = CIFS_INO_BLOCKS(asize);
-			} else {
-				cifsi->time = 0;
-			}
-			spin_unlock(&inode->i_lock);
-			goto out;
-		}
 
 		if (cifsi->cifsAttrs & FILE_ATTRIBUTE_SPARSE_FILE)
 			smb2_set_sparse(xid, tcon, cfile, inode, false);
 
 		new_eof = off + len;
-
-		qrc = SMB2_query_info(xid, tcon,
-				      cfile->fid.persistent_fid,
-				      cfile->fid.volatile_fid, &file_inf);
-		if (qrc == 0)
-			asize = le64_to_cpu(file_inf.AllocationSize);
-
-		/*
-		 * FILE_ALLOCATION_INFORMATION can only describe allocation up to
-		 * new_eof. Some servers may accept it without allocating blocks,
-		 * so refresh AllocationSize before updating i_blocks.
-		 */
-		if (off == 0 || off == old_eof) {
-			if (qrc || asize < new_eof) {
-				rc = SMB2_set_allocation(xid, tcon,
-							 cfile->fid.persistent_fid,
-							 cfile->fid.volatile_fid,
-							 cfile->pid, new_eof);
-				if (rc)
-					goto out;
-			}
-		}
-
 		rc = SMB2_set_eof(xid, tcon, cfile->fid.persistent_fid,
 				  cfile->fid.volatile_fid, cfile->pid, new_eof);
-		if (rc)
-			goto out;
-
-		cifs_resize_file_locked(inode, new_eof);
-
-		qrc = SMB2_query_info(xid, tcon,
-				      cfile->fid.persistent_fid,
-				      cfile->fid.volatile_fid, &file_inf);
-		spin_lock(&inode->i_lock);
-		if (qrc == 0) {
-			asize = le64_to_cpu(file_inf.AllocationSize);
-			if (asize >= new_eof)
-				inode->i_blocks = CIFS_INO_BLOCKS(asize);
-		} else {
-			cifsi->time = 0;
+		if (rc == 0) {
+			netfs_resize_file(&cifsi->netfs, new_eof, true);
+			cifs_setsize(inode, new_eof);
 		}
-		spin_unlock(&inode->i_lock);
 		goto out;
 	}
 
@@ -4207,7 +4082,7 @@ static long smb3_fallocate(struct file *file, struct cifs_tcon *tcon, int mode,
 		return smb3_collapse_range(file, tcon, off, len);
 	else if (mode == FALLOC_FL_INSERT_RANGE)
 		return smb3_insert_range(file, tcon, off, len);
-	else if (mode == FALLOC_FL_ALLOCATE_RANGE)
+	else if (mode == 0)
 		return smb3_simple_falloc(file, tcon, off, len, false);
 
 	return -EOPNOTSUPP;
@@ -4633,7 +4508,7 @@ crypt_message(struct TCP_Server_Info *server, int num_rqst,
 		rc = crypto_aead_setkey(tfm, key, SMB3_GCM256_CRYPTKEY_SIZE);
 	else
 		rc = crypto_aead_setkey(tfm, key, SMB3_GCM128_CRYPTKEY_SIZE);
-	memzero_explicit(key, sizeof(key));
+
 	if (rc) {
 		cifs_server_dbg(VFS, "%s: Failed to set aead key %d\n", __func__, rc);
 		return rc;
@@ -4742,10 +4617,10 @@ smb3_init_transform_rq(struct TCP_Server_Info *server, int num_rqst,
 			size_t cur_size = 0;
 			rc = netfs_alloc_folioq_buffer(NULL, &buffer, &cur_size,
 						       size, GFP_NOFS);
-			new->rq_buffer = buffer;
 			if (rc < 0)
 				goto err_free;
 
+			new->rq_buffer = buffer;
 			iov_iter_folio_queue(&new->rq_iter, ITER_SOURCE,
 					     buffer, 0, 0, size);
 
@@ -5373,7 +5248,7 @@ int __cifs_sfu_make_node(unsigned int xid, struct inode *inode,
 {
 	struct TCP_Server_Info *server = tcon->ses->server;
 	struct cifs_open_parms oparms;
-	struct cifs_open_info_data idata = {};
+	struct cifs_open_info_data idata;
 	struct cifs_io_parms io_parms = {};
 	struct cifs_sb_info *cifs_sb = CIFS_SB(inode->i_sb);
 	struct cifs_fid fid;
@@ -5422,13 +5297,16 @@ int __cifs_sfu_make_node(unsigned int xid, struct inode *inode,
 		data = (u8 *)symname_utf16;
 		break;
 	case S_IFSOCK:
-		/* SFU socket is system file with one zero byte */
-		type_len = 1;
-		type[0] = '\0';
+		type_len = 8;
+		strscpy(type, "LnxSOCK");
+		data = (u8 *)&pdev;
+		data_len = sizeof(pdev);
 		break;
 	case S_IFIFO:
-		/* SFU fifo is system file which is empty */
-		type_len = 0;
+		type_len = 8;
+		strscpy(type, "LnxFIFO");
+		data = (u8 *)&pdev;
+		data_len = sizeof(pdev);
 		break;
 	default:
 		rc = -EPERM;

@@ -321,7 +321,6 @@ static struct mount *alloc_vfsmnt(const char *name)
 		INIT_HLIST_NODE(&mnt->mnt_slave);
 		INIT_HLIST_NODE(&mnt->mnt_mp_list);
 		INIT_HLIST_HEAD(&mnt->mnt_stuck_children);
-		INIT_HLIST_NODE(&mnt->mnt_ns_visible);
 		RB_CLEAR_NODE(&mnt->mnt_node);
 		mnt->mnt.mnt_idmap = &nop_mnt_idmap;
 	}
@@ -1098,10 +1097,6 @@ static void mnt_add_to_ns(struct mnt_namespace *ns, struct mount *mnt)
 		ns->mnt_first_node = &mnt->mnt_node;
 	rb_link_node(&mnt->mnt_node, parent, link);
 	rb_insert_color(&mnt->mnt_node, &ns->mounts);
-
-	if ((mnt->mnt.mnt_sb->s_type->fs_flags & FS_USERNS_MOUNT_RESTRICTED) &&
-	    mnt->mnt.mnt_root == mnt->mnt.mnt_sb->s_root)
-		hlist_add_head(&mnt->mnt_ns_visible, &ns->mnt_visible_mounts);
 
 	mnt_notify_add(mnt);
 }
@@ -2908,9 +2903,6 @@ static int do_change_type(const struct path *path, int ms_flags)
 	for (m = mnt; m; m = (recurse ? next_mnt(m, mnt) : NULL))
 		change_mnt_propagation(m, type);
 
-	guard(mount_locked_reader)();
-	touch_mnt_namespace(mnt->mnt_ns);
-
 	return 0;
 }
 
@@ -3314,9 +3306,9 @@ static void mnt_warn_timestamp_expiry(const struct path *mountpoint,
 	   (ktime_get_real_seconds() + TIME_UPTIME_SEC_MAX > sb->s_time_max)) {
 		char *buf, *mntpath;
 
-		buf = __getname();
+		buf = (char *)__get_free_page(GFP_KERNEL);
 		if (buf)
-			mntpath = d_path(mountpoint, buf, PATH_MAX);
+			mntpath = d_path(mountpoint, buf, PAGE_SIZE);
 		else
 			mntpath = ERR_PTR(-ENOMEM);
 		if (IS_ERR(mntpath))
@@ -3329,7 +3321,8 @@ static void mnt_warn_timestamp_expiry(const struct path *mountpoint,
 			(unsigned long long)sb->s_time_max);
 
 		sb->s_iflags |= SB_I_TS_EXPIRY_WARNED;
-		__putname(buf);
+		if (buf)
+			free_page((unsigned long)buf);
 	}
 }
 
@@ -3484,10 +3477,6 @@ static int do_set_group(const struct path *from_path, const struct path *to_path
 		list_add(&to->mnt_share, &from->mnt_share);
 		set_mnt_shared(to);
 	}
-
-	guard(mount_locked_reader)();
-	touch_mnt_namespace(to->mnt_ns);
-
 	return 0;
 }
 
@@ -4513,10 +4502,6 @@ SYSCALL_DEFINE3(fsmount, int, fs_fd, unsigned int, flags,
 	new_mnt = vfs_create_mount(fc);
 	if (IS_ERR(new_mnt))
 		return PTR_ERR(new_mnt);
-	if (new_mnt->mnt_sb->s_flags & SB_NOUSER) {
-		mntput(new_mnt);
-		return -EINVAL;
-	}
 	new_mnt->mnt_flags = mnt_flags;
 
 	new_path.dentry = dget(fc->root);
@@ -6191,14 +6176,12 @@ static void __init init_mount_tree(void)
 	struct path root;
 
 	/*
-	 * We create three mounts:
+	 * We create two mounts:
 	 *
 	 * (1) nullfs with mount id 1
 	 * (2) mutable rootfs with mount id 2
-	 * (3) private nullfs for kthreads (SB_KERNMOUNT)
 	 *
-	 * with (2) mounted on top of (1). The init_task's root and pwd
-	 * are pointed at (3) so all kthreads start isolated in nullfs.
+	 * with (2) mounted on top of (1).
 	 */
 	nullfs_mnt = vfs_kern_mount(&nullfs_fs_type, 0, "nullfs", NULL);
 	if (IS_ERR(nullfs_mnt))
@@ -6238,14 +6221,12 @@ static void __init init_mount_tree(void)
 		init_mnt_ns.nr_mounts++;
 	}
 
-	nullfs_mnt = kern_mount(&nullfs_fs_type);
-	if (IS_ERR(nullfs_mnt))
-		panic("VFS: Failed to create private nullfs instance");
-	root.mnt	= nullfs_mnt;
-	root.dentry	= nullfs_mnt->mnt_root;
-
 	init_task.nsproxy->mnt_ns = &init_mnt_ns;
 	get_mnt_ns(&init_mnt_ns);
+
+	/* The root and pwd always point to the mutable rootfs. */
+	root.mnt	= mnt;
+	root.dentry	= mnt->mnt_root;
 	set_fs_pwd(current->fs, &root);
 	set_fs_root(current->fs, &root);
 
@@ -6270,7 +6251,8 @@ void __init mnt_init(void)
 				HASH_ZERO,
 				&mp_hash_shift, &mp_hash_mask, 0, 0);
 
-	super_dev_init();
+	if (!mount_hashtable || !mountpoint_hashtable)
+		panic("Failed to allocate mount hash table\n");
 
 	kernfs_init();
 
@@ -6284,7 +6266,6 @@ void __init mnt_init(void)
 	shmem_init();
 	init_rootfs();
 	init_mount_tree();
-	failfs_init();
 }
 
 void put_mnt_ns(struct mnt_namespace *ns)
@@ -6294,7 +6275,7 @@ void put_mnt_ns(struct mnt_namespace *ns)
 	guard(namespace_excl)();
 	emptied_ns = ns;
 	guard(mount_writer)();
-	umount_tree(ns->root, UMOUNT_CONNECTED);
+	umount_tree(ns->root, 0);
 }
 
 struct vfsmount *kern_mount(struct file_system_type *type)
@@ -6362,26 +6343,20 @@ static bool mnt_already_visible(struct mnt_namespace *ns,
 				int *new_mnt_flags)
 {
 	int new_flags = *new_mnt_flags;
-	struct mount *mnt;
-
-	/* Don't acquire namespace semaphore without a good reason. */
-	if (hlist_empty(&ns->mnt_visible_mounts))
-		return false;
+	struct mount *mnt, *n;
 
 	guard(namespace_shared)();
-	hlist_for_each_entry(mnt, &ns->mnt_visible_mounts, mnt_ns_visible) {
-		const struct super_block *sb_visible = mnt->mnt.mnt_sb;
+	rbtree_postorder_for_each_entry_safe(mnt, n, &ns->mounts, mnt_node) {
 		struct mount *child;
 		int mnt_flags;
 
-		if (sb_visible->s_type != sb->s_type)
+		if (mnt->mnt.mnt_sb->s_type != sb->s_type)
 			continue;
 
-		/*
-		 * Restricted variants are not compatible with anything, even
-		 * other restricted variants.
+		/* This mount is not fully visible if it's root directory
+		 * is not the root directory of the filesystem.
 		 */
-		if (sb_visible->s_iflags & SB_I_RESTRICTED_VARIANT)
+		if (mnt->mnt.mnt_root != mnt->mnt.mnt_sb->s_root)
 			continue;
 
 		/* A local view of the mount flags */
@@ -6433,22 +6408,15 @@ static bool mount_too_revealing(const struct super_block *sb, int *new_mnt_flags
 		return false;
 
 	/* Can this filesystem be too revealing? */
-	if (!(sb->s_type->fs_flags & FS_USERNS_MOUNT_RESTRICTED))
+	s_iflags = sb->s_iflags;
+	if (!(s_iflags & SB_I_USERNS_VISIBLE))
 		return false;
 
-	s_iflags = sb->s_iflags;
 	if ((s_iflags & required_iflags) != required_iflags) {
 		WARN_ONCE(1, "Expected s_iflags to contain 0x%lx\n",
 			  required_iflags);
 		return true;
 	}
-
-	/*
-	 * Restricted variants don't need an already visible mount because they
-	 * don't expose the full filesystem view.
-	 */
-	if (s_iflags & SB_I_RESTRICTED_VARIANT)
-		return false;
 
 	return !mnt_already_visible(ns, sb, new_mnt_flags);
 }

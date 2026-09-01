@@ -30,7 +30,6 @@
 #ifndef __DM_HELPERS__
 #define __DM_HELPERS__
 
-#include "modules/inc/mod_info_packet_types.h"
 #include "dc_types.h"
 #include "dc.h"
 
@@ -192,25 +191,6 @@ void dm_helpers_mccs_vcp_set(
 		struct dc_link *link,
 		struct dc_sink *sink);
 
-#if IS_ENABLED(CONFIG_DRM_AMD_DC_KUNIT_TEST)
-#define STATIC_IFN_KUNIT
-#define INLINE_IFN_KUNIT inline
-#define EXPORT_IF_KUNIT(symbol) EXPORT_SYMBOL(symbol)
-
-#else
-#define STATIC_IFN_KUNIT static
-#define INLINE_IFN_KUNIT
-#define EXPORT_IF_KUNIT(symbol)
-#endif
-
-bool dm_helpers_submit_i2c_over_aux(
-	struct ddc_service *ddc,
-	uint32_t address,
-	uint8_t offset,
-	uint8_t *cmdBuffer,
-	uint32_t len,
-	bool read);
-
 bool dm_helpers_dp_handle_test_pattern_request(
 		struct dc_context *ctx,
 		const struct dc_link *link,
@@ -250,10 +230,10 @@ int dm_helpers_dmub_set_config_sync(struct dc_context *ctx,
 		const struct dc_link *link,
 		struct set_config_cmd_payload *payload,
 		enum set_config_status *operation_result);
-enum adaptive_sync_type dm_get_adaptive_sync_support_type(struct dc_link *link);
 
 enum dc_edid_status dm_helpers_get_sbios_edid(struct dc_link *link, struct dc_edid *edid);
 
+bool dm_helpers_is_vrr_pcon_compatible(const struct dc_link *link, const struct drm_device *dev);
 bool dm_helpers_is_fullscreen(struct dc_context *ctx, struct dc_stream_state *stream);
 bool dm_helpers_is_hdr_on(struct dc_context *ctx, struct dc_stream_state *stream);
 

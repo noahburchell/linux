@@ -1,0 +1,5602 @@
+access-marking.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Access Marking
+--------------
+
+Literal include of ``tools/memory-model/Documentation/access-marking.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/access-marking.txt
+   :literal:
+===================================================
+
+cheatsheet.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Cheatsheet
+----------
+
+Literal include of ``tools/memory-model/Documentation/cheatsheet.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/cheatsheet.txt
+   :literal:
+===================================================
+
+control-dependencies.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Control Dependencies
+--------------------
+
+Literal include of ``tools/memory-model/Documentation/control-dependencies.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/control-dependencies.txt
+   :literal:
+===================================================
+
+explanation.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Explanation
+-----------
+
+Literal include of ``tools/memory-model/Documentation/explanation.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/explanation.txt
+   :literal:
+===================================================
+
+glossary.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Glossary
+--------
+
+Literal include of ``tools/memory-model/Documentation/glossary.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/glossary.txt
+   :literal:
+===================================================
+
+herd-representation.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+herd-representation
+-------------------
+
+Literal include of ``tools/memory-model/Documentation/herd-representation.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/herd-representation.txt
+   :literal:
+===================================================
+
+index.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Documentation
+=============
+
+.. toctree::
+   :maxdepth: 1
+
+   readme
+   simple
+   ordering
+   litmus-tests
+   locking
+   recipes
+   control-dependencies
+   access-marking
+   cheatsheet
+   explanation
+   herd-representation
+   glossary
+   references
+===================================================
+
+litmus-tests.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Litmus Tests
+------------
+
+Literal include of ``tools/memory-model/Documentation/litmus-tests.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/litmus-tests.txt
+   :literal:
+===================================================
+
+locking.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Locking
+-------
+
+Literal include of ``tools/memory-model/Documentation/locking.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/locking.txt
+   :literal:
+===================================================
+
+ordering.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Ordering
+--------
+
+Literal include of ``tools/memory-model/Documentation/ordering.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/ordering.txt
+   :literal:
+===================================================
+
+readme.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+README (for LKMM Documentation)
+-------------------------------
+
+Literal include of ``tools/memory-model/Documentation/README``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/README
+   :literal:
+===================================================
+
+recipes.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Recipes
+-------
+
+Literal include of ``tools/memory-model/Documentation/recipes.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/recipes.txt
+   :literal:
+===================================================
+
+references.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+References
+----------
+
+Literal include of ``tools/memory-model/Documentation/references.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/references.txt
+   :literal:
+===================================================
+
+simple.rst
+===================================================
+.. SPDX-License-Identifier: GPL-2.0
+
+Simple
+------
+
+Literal include of ``tools/memory-model/Documentation/simple.txt``.
+
+------------------------------------------------------------------
+
+.. kernel-include:: tools/memory-model/Documentation/simple.txt
+   :literal:
+===================================================
+
+check-variable-fonts.py
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-only
+# Copyright (C) Akira Yokosawa, 2024
+#
+# Ported to Python by (c) Mauro Carvalho Chehab, 2025
+#
+# pylint: disable=C0103
+
+"""
+Detect problematic Noto CJK variable fonts.
+
+or more details, see .../tools/lib/python/kdoc/latex_fonts.py.
+"""
+
+import argparse
+import sys
+import os.path
+
+src_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(src_dir, '../lib/python'))
+
+from kdoc.latex_fonts import LatexFontChecker
+
+checker = LatexFontChecker()
+
+parser=argparse.ArgumentParser(description=checker.description(),
+                               formatter_class=argparse.RawTextHelpFormatter)
+parser.add_argument("--deny-vf",
+                    help="XDG_CONFIG_HOME dir containing fontconfig/fonts.conf file")
+
+args=parser.parse_args()
+
+msg = LatexFontChecker(args.deny_vf).check()
+if msg:
+    print(msg)
+
+sys.exit(1)
+===================================================
+
+checktransupdate.py
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+
+"""
+This script helps track the translation status of the documentation
+in different locales, e.g., zh_CN. More specially, it uses `git log`
+commit to find the latest english commit from the translation commit
+(order by author date) and the latest english commits from HEAD. If
+differences occur, report the file and commits that need to be updated.
+
+The usage is as follows:
+- tools/docs/checktransupdate.py -l zh_CN
+This will print all the files that need to be updated or translated in the zh_CN locale.
+- tools/docs/checktransupdate.py Documentation/translations/zh_CN/dev-tools/testing-overview.rst
+This will only print the status of the specified file.
+- tools/docs/checktransupdate.py Documentation/translations/zh_CN/dev-tools
+This will print the status of all files under the directory.
+
+The output is something like:
+Documentation/dev-tools/kfence.rst
+No translation in the locale of zh_CN
+
+Documentation/translations/zh_CN/dev-tools/testing-overview.rst
+commit 42fb9cfd5b18 ("Documentation: dev-tools: Add link to RV docs")
+1 commits needs resolving in total
+"""
+
+import os
+import re
+import time
+import logging
+from argparse import ArgumentParser, ArgumentTypeError, BooleanOptionalAction
+from datetime import datetime
+
+
+def get_origin_path(file_path):
+    """Get the origin path from the translation path"""
+    paths = file_path.split("/")
+    tidx = paths.index("translations")
+    opaths = paths[:tidx]
+    opaths += paths[tidx + 2 :]
+    return "/".join(opaths)
+
+
+def get_latest_commit_from(file_path, commit):
+    """Get the latest commit from the specified commit for the specified file"""
+    command = f"git log --pretty=format:%H%n%aD%n%cD%n%n%B {commit} -1 -- {file_path}"
+    logging.debug(command)
+    pipe = os.popen(command)
+    result = pipe.read()
+    result = result.split("\n")
+    if len(result) <= 1:
+        return None
+
+    logging.debug("Result: %s", result[0])
+
+    return {
+        "hash": result[0],
+        "author_date": datetime.strptime(result[1], "%a, %d %b %Y %H:%M:%S %z"),
+        "commit_date": datetime.strptime(result[2], "%a, %d %b %Y %H:%M:%S %z"),
+        "message": result[4:],
+    }
+
+
+def get_origin_from_trans(origin_path, t_from_head):
+    """Get the latest origin commit from the translation commit"""
+    o_from_t = get_latest_commit_from(origin_path, t_from_head["hash"])
+    while o_from_t is not None and o_from_t["author_date"] > t_from_head["author_date"]:
+        o_from_t = get_latest_commit_from(origin_path, o_from_t["hash"] + "^")
+    if o_from_t is not None:
+        logging.debug("tracked origin commit id: %s", o_from_t["hash"])
+    return o_from_t
+
+
+def get_origin_from_trans_smartly(origin_path, t_from_head):
+    """Get the latest origin commit from the formatted translation commit:
+    (1) update to commit HASH (TITLE)
+    (2) Update the translation through commit HASH (TITLE)
+    """
+    # catch flag for 12-bit commit hash
+    hash_re = r'([0-9a-f]{12})'
+    # pattern 1: contains "update to commit HASH"
+    pat_update_to = re.compile(rf'update to commit {hash_re}')
+    # pattern 2: contains "Update the translation through commit HASH"
+    pat_update_translation = re.compile(rf'Update the translation through commit {hash_re}')
+
+    origin_commit_hash = None
+    for line in t_from_head["message"]:
+        # check if the line matches the first pattern
+        match = pat_update_to.search(line)
+        if match:
+            origin_commit_hash = match.group(1)
+            break
+        # check if the line matches the second pattern
+        match = pat_update_translation.search(line)
+        if match:
+            origin_commit_hash = match.group(1)
+            break
+    if origin_commit_hash is None:
+        return None
+    o_from_t = get_latest_commit_from(origin_path, origin_commit_hash)
+    if o_from_t is not None:
+        logging.debug("tracked origin commit id: %s", o_from_t["hash"])
+    return o_from_t
+
+
+def get_commits_count_between(opath, commit1, commit2):
+    """Get the commits count between two commits for the specified file"""
+    command = f"git log --pretty=format:%H {commit1}...{commit2} -- {opath}"
+    logging.debug(command)
+    pipe = os.popen(command)
+    result = pipe.read().split("\n")
+    # filter out empty lines
+    result = list(filter(lambda x: x != "", result))
+    return result
+
+
+def pretty_output(commit):
+    """Pretty print the commit message"""
+    command = f"git log --pretty='format:%h (\"%s\")' -1 {commit}"
+    logging.debug(command)
+    pipe = os.popen(command)
+    return pipe.read()
+
+
+def valid_commit(commit):
+    """Check if the commit is valid or not"""
+    msg = pretty_output(commit)
+    return "Merge tag" not in msg
+
+def check_per_file(file_path):
+    """Check the translation status for the specified file"""
+    opath = get_origin_path(file_path)
+
+    if not os.path.isfile(opath):
+        logging.error("Cannot find the origin path for %s", file_path)
+        return
+
+    o_from_head = get_latest_commit_from(opath, "HEAD")
+    t_from_head = get_latest_commit_from(file_path, "HEAD")
+
+    if o_from_head is None or t_from_head is None:
+        logging.error("Cannot find the latest commit for %s", file_path)
+        return
+
+    o_from_t = get_origin_from_trans_smartly(opath, t_from_head)
+    # notice, o_from_t from get_*_smartly() is always more accurate than from get_*()
+    if o_from_t is None:
+        o_from_t = get_origin_from_trans(opath, t_from_head)
+
+    if o_from_t is None:
+        logging.error("Error: Cannot find the latest origin commit for %s", file_path)
+        return
+
+    if o_from_head["hash"] == o_from_t["hash"]:
+        logging.debug("No update needed for %s", file_path)
+    else:
+        logging.info(file_path)
+        commits = get_commits_count_between(
+            opath, o_from_t["hash"], o_from_head["hash"]
+        )
+        count = 0
+        for commit in commits:
+            if valid_commit(commit):
+                logging.info("commit %s", pretty_output(commit))
+                count += 1
+        logging.info("%d commits needs resolving in total\n", count)
+
+
+def valid_locales(locale):
+    """Check if the locale is valid or not"""
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    linux_path = os.path.join(script_path, "../..")
+    if not os.path.isdir(f"{linux_path}/Documentation/translations/{locale}"):
+        raise ArgumentTypeError("Invalid locale: {locale}")
+    return locale
+
+
+def list_files_with_excluding_folders(folder, exclude_folders, include_suffix):
+    """List all files with the specified suffix in the folder and its subfolders"""
+    files = []
+    stack = [folder]
+
+    while stack:
+        pwd = stack.pop()
+        # filter out the exclude folders
+        if os.path.basename(pwd) in exclude_folders:
+            continue
+        # list all files and folders
+        for item in os.listdir(pwd):
+            ab_item = os.path.join(pwd, item)
+            if os.path.isdir(ab_item):
+                stack.append(ab_item)
+            else:
+                if ab_item.endswith(include_suffix):
+                    files.append(ab_item)
+
+    return files
+
+
+class DmesgFormatter(logging.Formatter):
+    """Custom dmesg logging formatter"""
+    def format(self, record):
+        timestamp = time.time()
+        formatted_time = f"[{timestamp:>10.6f}]"
+        log_message = f"{formatted_time} {record.getMessage()}"
+        return log_message
+
+
+def config_logging(log_level, log_file="checktransupdate.log"):
+    """configure logging based on the log level"""
+    # set up the root logger
+    logger = logging.getLogger()
+    logger.setLevel(log_level)
+
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(log_level)
+
+    # Create file handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(log_level)
+
+    # Create formatter and add it to the handlers
+    formatter = DmesgFormatter()
+    console_handler.setFormatter(formatter)
+    file_handler.setFormatter(formatter)
+
+    # Add the handler to the logger
+    logger.addHandler(console_handler)
+    logger.addHandler(file_handler)
+
+
+def main():
+    """Main function of the script"""
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    linux_path = os.path.join(script_path, "../..")
+
+    parser = ArgumentParser(description="Check the translation update")
+    parser.add_argument(
+        "-l",
+        "--locale",
+        default="zh_CN",
+        type=valid_locales,
+        help="Locale to check when files are not specified",
+    )
+
+    parser.add_argument(
+        "--print-missing-translations",
+        action=BooleanOptionalAction,
+        default=True,
+        help="Print files that do not have translations",
+    )
+
+    parser.add_argument(
+        '--log',
+        default='INFO',
+        choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
+        help='Set the logging level')
+
+    parser.add_argument(
+        '--logfile',
+        default='checktransupdate.log',
+        help='Set the logging file (default: checktransupdate.log)')
+
+    parser.add_argument(
+        "files", nargs="*", help="Files or directories to check, if not specified, check all files"
+    )
+    args = parser.parse_args()
+
+    # Configure logging based on the --log argument
+    log_level = getattr(logging, args.log.upper(), logging.INFO)
+    config_logging(log_level)
+
+    # Get files related to linux path
+    files = args.files
+    if len(files) == 0:
+        offical_files = list_files_with_excluding_folders(
+            os.path.join(linux_path, "Documentation"), ["translations", "output"], "rst"
+        )
+
+        for file in offical_files:
+            # split the path into parts
+            path_parts = file.split(os.sep)
+            # find the index of the "Documentation" directory
+            kindex = path_parts.index("Documentation")
+            # insert the translations and locale after the Documentation directory
+            new_path_parts = path_parts[:kindex + 1] + ["translations", args.locale] \
+                           + path_parts[kindex + 1 :]
+            # join the path parts back together
+            new_file = os.sep.join(new_path_parts)
+            if os.path.isfile(new_file):
+                files.append(new_file)
+            else:
+                if args.print_missing_translations:
+                    logging.info(os.path.relpath(os.path.abspath(file), linux_path))
+                    logging.info("No translation in the locale of %s\n", args.locale)
+    else:
+        # check if the files are directories or files
+        new_files = []
+        for file in files:
+            if os.path.isfile(file):
+                new_files.append(file)
+            elif os.path.isdir(file):
+                # for directories, list all files in the directory and its subfolders
+                new_files.extend(list_files_with_excluding_folders(file, [], "rst"))
+        files = new_files
+
+    files = list(map(lambda x: os.path.relpath(os.path.abspath(x), linux_path), files))
+
+    # cd to linux root directory
+    os.chdir(linux_path)
+
+    for file in files:
+        check_per_file(file)
+
+
+if __name__ == "__main__":
+    main()
+===================================================
+
+documentation-file-ref-check
+===================================================
+#!/usr/bin/env perl
+# SPDX-License-Identifier: GPL-2.0
+#
+# Treewide grep for references to files under Documentation, and report
+# non-existing files in stderr.
+
+use warnings;
+use strict;
+use Getopt::Long qw(:config no_auto_abbrev);
+
+# NOTE: only add things here when the file was gone, but the text wants
+# to mention a past documentation file, for example, to give credits for
+# the original work.
+my %false_positives = (
+	"Documentation/scsi/scsi_mid_low_api.rst" => "Documentation/Configure.help",
+	"drivers/vhost/vhost.c" => "Documentation/virtual/lguest/lguest.c",
+);
+
+my $scriptname = $0;
+$scriptname =~ s,tools/docs/([^/]+/),$1,;
+
+# Parse arguments
+my $help = 0;
+my $fix = 0;
+my $warn = 0;
+
+if (! -e ".git") {
+	printf "Warning: can't check if file exists, as this is not a git tree\n";
+	exit 0;
+}
+
+GetOptions(
+	'fix' => \$fix,
+	'warn' => \$warn,
+	'h|help|usage' => \$help,
+);
+
+if ($help != 0) {
+    print "$scriptname [--help] [--fix]\n";
+    exit -1;
+}
+
+# Step 1: find broken references
+print "Finding broken references. This may take a while...  " if ($fix);
+
+my %broken_ref;
+
+my $doc_fix = 0;
+
+open IN, "git grep ':doc:\`' Documentation/|"
+     or die "Failed to run git grep";
+while (<IN>) {
+	next if (!m,^([^:]+):.*\:doc\:\`([^\`]+)\`,);
+	next if (m,sphinx/,);
+
+	my $file = $1;
+	my $d = $1;
+	my $doc_ref = $2;
+
+	my $f = $doc_ref;
+
+	$d =~ s,(.*/).*,$1,;
+	$f =~ s,.*\<([^\>]+)\>,$1,;
+
+	if ($f =~ m,^/,) {
+		$f = "$f.rst";
+		$f =~ s,^/,Documentation/,;
+	} else {
+		$f = "$d$f.rst";
+	}
+
+	next if (grep -e, glob("$f"));
+
+	if ($fix && !$doc_fix) {
+		print STDERR "\nWARNING: Currently, can't fix broken :doc:`` fields\n";
+	}
+	$doc_fix++;
+
+	print STDERR "$file: :doc:`$doc_ref`\n";
+}
+close IN;
+
+open IN, "git grep 'Documentation/'|"
+     or die "Failed to run git grep";
+while (<IN>) {
+	next if (!m/^([^:]+):(.*)/);
+
+	my $f = $1;
+	my $ln = $2;
+
+	# On linux-next, discard the Next/ directory
+	next if ($f =~ m,^Next/,);
+
+	# Makefiles and scripts contain nasty expressions to parse docs
+	next if ($f =~ m/Makefile/ || $f =~ m/\.(sh|py|pl|~|rej|org|orig)$/);
+
+	# It doesn't make sense to parse hidden files
+	next if ($f =~ m#/\.#);
+
+	# Skip this script
+	next if ($f eq $scriptname);
+
+	# Ignore the dir where documentation will be built
+	next if ($ln =~ m,\b(\S*)Documentation/output,);
+
+	if ($ln =~ m,\b(\S*)(Documentation/[A-Za-z0-9\_\.\,\~/\*\[\]\?+-]*)(.*),) {
+		my $prefix = $1;
+		my $ref = $2;
+		my $base = $2;
+		my $extra = $3;
+
+		# some file references are like:
+		# /usr/src/linux/Documentation/DMA-{API,mapping}.txt
+		# For now, ignore them
+		next if ($extra =~ m/^{/);
+
+		# Remove footnotes at the end like:
+		# Documentation/devicetree/dt-object-internal.txt[1]
+		$ref =~ s/(txt|rst)\[\d+]$/$1/;
+
+		# Remove ending ']' without any '['
+		$ref =~ s/\].*// if (!($ref =~ m/\[/));
+
+		# Remove puntuation marks at the end
+		$ref =~ s/[\,\.]+$//;
+
+		my $fulref = "$prefix$ref";
+
+		$fulref =~ s/^(\<file|ref)://;
+		$fulref =~ s/^[\'\`]+//;
+		$fulref =~ s,^\$\(.*\)/,,;
+		$base =~ s,.*/,,;
+
+		# Remove URL false-positives
+		next if ($fulref =~ m/^http/);
+
+		# Remove sched-pelt false-positive
+		next if ($fulref =~ m,^Documentation/scheduler/sched-pelt$,);
+
+		# Discard some build examples from Documentation/target/tcm_mod_builder.rst
+		next if ($fulref =~ m,mnt/sdb/lio-core-2.6.git/Documentation/target,);
+
+		# Check if exists, evaluating wildcards
+		next if (grep -e, glob("$ref $fulref"));
+
+		# Accept relative Documentation patches for tools/
+		if ($f =~ m/tools/) {
+			my $path = $f;
+			$path =~ s,(.*)/.*,$1,;
+			$path =~ s,testing/selftests/bpf,bpf/bpftool,;
+			next if (grep -e, glob("$path/$ref $path/../$ref $path/$fulref"));
+		}
+
+		# Discard known false-positives
+		if (defined($false_positives{$f})) {
+			next if ($false_positives{$f} eq $fulref);
+		}
+
+		if ($fix) {
+			if (!($ref =~ m/(scripts|Kconfig|Kbuild)/)) {
+				$broken_ref{$ref}++;
+			}
+		} elsif ($warn) {
+			print STDERR "Warning: $f references a file that doesn't exist: $fulref\n";
+		} else {
+			print STDERR "$f: $fulref\n";
+		}
+	}
+}
+close IN;
+
+exit 0 if (!$fix);
+
+# Step 2: Seek for file name alternatives
+print "Auto-fixing broken references. Please double-check the results\n";
+
+foreach my $ref (keys %broken_ref) {
+	my $new =$ref;
+
+	my $basedir = ".";
+	# On translations, only seek inside the translations directory
+	$basedir  = $1 if ($ref =~ m,(Documentation/translations/[^/]+),);
+
+	# get just the basename
+	$new =~ s,.*/,,;
+
+	my $f="";
+
+	# usual reason for breakage: DT file moved around
+	if ($ref =~ /devicetree/) {
+		# usual reason for breakage: DT file renamed to .yaml
+		if (!$f) {
+			my $new_ref = $ref;
+			$new_ref =~ s/\.txt$/.yaml/;
+			$f=$new_ref if (-f $new_ref);
+		}
+
+		if (!$f) {
+			my $search = $new;
+			$search =~ s,^.*/,,;
+			$f = qx(find Documentation/devicetree/ -iname "*$search*") if ($search);
+			if (!$f) {
+				# Manufacturer name may have changed
+				$search =~ s/^.*,//;
+				$f = qx(find Documentation/devicetree/ -iname "*$search*") if ($search);
+			}
+		}
+	}
+
+	# usual reason for breakage: file renamed to .rst
+	if (!$f) {
+		$new =~ s/\.txt$/.rst/;
+		$f=qx(find $basedir -iname $new) if ($new);
+	}
+
+	# usual reason for breakage: use dash or underline
+	if (!$f) {
+		$new =~ s/[-_]/[-_]/g;
+		$f=qx(find $basedir -iname $new) if ($new);
+	}
+
+	# Wild guess: seek for the same name on another place
+	if (!$f) {
+		$f = qx(find $basedir -iname $new) if ($new);
+	}
+
+	my @find = split /\s+/, $f;
+
+	if (!$f) {
+		print STDERR "ERROR: Didn't find a replacement for $ref\n";
+	} elsif (scalar(@find) > 1) {
+		print STDERR "WARNING: Won't auto-replace, as found multiple files close to $ref:\n";
+		foreach my $j (@find) {
+			$j =~ s,^./,,;
+			print STDERR "    $j\n";
+		}
+	} else {
+		$f = $find[0];
+		$f =~ s,^./,,;
+		print "INFO: Replacing $ref to $f\n";
+		foreach my $j (qx(git grep -l $ref)) {
+			qx(sed "s\@$ref\@$f\@g" -i $j);
+		}
+	}
+}
+===================================================
+
+features-refresh.sh
+===================================================
+#
+# Small script that refreshes the kernel feature support status in place.
+#
+
+for F_FILE in Documentation/features/*/*/arch-support.txt; do
+	F=$(grep "^#         Kconfig:" "$F_FILE" | cut -c26-)
+
+	#
+	# Each feature F is identified by a pair (O, K), where 'O' can
+	# be either the empty string (for 'nop') or "not" (the logical
+	# negation operator '!'); other operators are not supported.
+	#
+	O=""
+	K=$F
+	if [[ "$F" == !* ]]; then
+		O="not"
+		K=$(echo $F | sed -e 's/^!//g')
+	fi
+
+	#
+	# F := (O, K) is 'valid' iff there is a Kconfig file (for some
+	# arch) which contains K.
+	#
+	# Notice that this definition entails an 'asymmetry' between
+	# the case 'O = ""' and the case 'O = "not"'. E.g., F may be
+	# _invalid_ if:
+	#
+	# [case 'O = ""']
+	#   1) no arch provides support for F,
+	#   2) K does not exist (e.g., it was renamed/mis-typed);
+	#
+	# [case 'O = "not"']
+	#   3) all archs provide support for F,
+	#   4) as in (2).
+	#
+	# The rationale for adopting this definition (and, thus, for
+	# keeping the asymmetry) is:
+	#
+	#       We want to be able to 'detect' (2) (or (4)).
+	#
+	# (1) and (3) may further warn the developers about the fact
+	# that K can be removed.
+	#
+	F_VALID="false"
+	for ARCH_DIR in arch/*/; do
+		K_FILES=$(find $ARCH_DIR -name "Kconfig*")
+		K_GREP=$(grep "$K" $K_FILES)
+		if [ ! -z "$K_GREP" ]; then
+			F_VALID="true"
+			break
+		fi
+	done
+	if [ "$F_VALID" = "false" ]; then
+		printf "WARNING: '%s' is not a valid Kconfig\n" "$F"
+	fi
+
+	T_FILE="$F_FILE.tmp"
+	grep "^#" $F_FILE > $T_FILE
+	echo "    -----------------------" >> $T_FILE
+	echo "    |         arch |status|" >> $T_FILE
+	echo "    -----------------------" >> $T_FILE
+	for ARCH_DIR in arch/*/; do
+		ARCH=$(echo $ARCH_DIR | sed -e 's/^arch//g' | sed -e 's/\///g')
+		K_FILES=$(find $ARCH_DIR -name "Kconfig*")
+		K_GREP=$(grep "$K" $K_FILES)
+		#
+		# Arch support status values for (O, K) are updated according
+		# to the following rules.
+		#
+		#   - ("", K) is 'supported by a given arch', if there is a
+		#     Kconfig file for that arch which contains K;
+		#
+		#   - ("not", K) is 'supported by a given arch', if there is
+		#     no Kconfig file for that arch which contains K;
+		#
+		#   - otherwise: preserve the previous status value (if any),
+		#                default to 'not yet supported'.
+		#
+		# Notice that, according these rules, invalid features may be
+		# updated/modified.
+		#
+		if [ "$O" = "" ] && [ ! -z "$K_GREP" ]; then
+			printf "    |%12s: |  ok  |\n" "$ARCH" >> $T_FILE
+		elif [ "$O" = "not" ] && [ -z "$K_GREP" ]; then
+			printf "    |%12s: |  ok  |\n" "$ARCH" >> $T_FILE
+		else
+			S=$(grep -v "^#" "$F_FILE" | grep " $ARCH:")
+			if [ ! -z "$S" ]; then
+				echo "$S" >> $T_FILE
+			else
+				printf "    |%12s: | TODO |\n" "$ARCH" \
+					>> $T_FILE
+			fi
+		fi
+	done
+	echo "    -----------------------" >> $T_FILE
+	mv $T_FILE $F_FILE
+done
+===================================================
+
+find-unused-docs.sh
+===================================================
+#!/bin/bash
+# (c) 2017, Jonathan Corbet <corbet@lwn.net>
+#           sayli karnik <karniksayli1995@gmail.com>
+#
+# This script detects files with kernel-doc comments for exported functions
+# that are not included in documentation.
+#
+# usage: Run 'tools/docs/find-unused-docs.sh directory' from top level of kernel
+# 	 tree.
+#
+# example: $tools/docs/find-unused-docs.sh drivers/scsi
+#
+# Licensed under the terms of the GNU GPL License
+
+if ! [ -d "Documentation" ]; then
+	echo "Run from top level of kernel tree"
+	exit 1
+fi
+
+if [ "$#" -ne 1 ]; then
+	echo "Usage: tools/docs/find-unused-docs.sh directory"
+	exit 1
+fi
+
+if ! [ -d "$1" ]; then
+	echo "Directory $1 doesn't exist"
+	exit 1
+fi
+
+cd "$( dirname "${BASH_SOURCE[0]}" )"
+cd ../..
+
+cd Documentation/
+
+echo "The following files contain kerneldoc comments for exported functions \
+that are not used in the formatted documentation"
+
+# FILES INCLUDED
+
+files_included=($(grep -rHR ".. kernel-doc" --include \*.rst | cut -d " " -f 3))
+
+declare -A FILES_INCLUDED
+
+for each in "${files_included[@]}"; do
+	FILES_INCLUDED[$each]="$each"
+	done
+
+cd ..
+
+# FILES NOT INCLUDED
+
+for file in `find $1 -name '*.c'`; do
+
+	if [[ ${FILES_INCLUDED[$file]+_} ]]; then
+	continue;
+	fi
+	str=$(PYTHONDONTWRITEBYTECODE=1 tools/docs/kernel-doc -export "$file" 2>/dev/null)
+	if [[ -n "$str" ]]; then
+	echo "$file"
+	fi
+	done
+
+===================================================
+
+gen-redirects.py
+===================================================
+#! /usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright © 2025, Oracle and/or its affiliates.
+# Author: Vegard Nossum <vegard.nossum@oracle.com>
+
+"""Generate HTML redirects for renamed Documentation/**.rst files using
+the output of tools/docs/gen-renames.py.
+
+Example:
+
+    tools/docs/gen-redirects.py --output Documentation/output/ < Documentation/.renames.txt
+"""
+
+import argparse
+import os
+import sys
+
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument('-o', '--output', help='output directory')
+
+args = parser.parse_args()
+
+for line in sys.stdin:
+    line = line.rstrip('\n')
+
+    old_name, new_name = line.split(' ', 2)
+
+    old_html_path = os.path.join(args.output, old_name + '.html')
+    new_html_path = os.path.join(args.output, new_name + '.html')
+
+    if not os.path.exists(new_html_path):
+        print(f"warning: target does not exist: {new_html_path} (redirect from {old_html_path})")
+        continue
+
+    old_html_dir = os.path.dirname(old_html_path)
+    if not os.path.exists(old_html_dir):
+        os.makedirs(old_html_dir)
+
+    relpath = os.path.relpath(new_name, os.path.dirname(old_name)) + '.html'
+
+    with open(old_html_path, 'w') as f:
+        print(f"""\
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <title>This page has moved</title>
+    <meta http-equiv="refresh" content="0; url={relpath}">
+</head>
+<body>
+<p>This page has moved to <a href="{relpath}">{new_name}</a>.</p>
+</body>
+</html>""", file=f)
+===================================================
+
+gen-renames.py
+===================================================
+#! /usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+#
+# Copyright © 2025, Oracle and/or its affiliates.
+# Author: Vegard Nossum <vegard.nossum@oracle.com>
+
+"""Trawl repository history for renames of Documentation/**.rst files.
+
+Example:
+
+    tools/docs/gen-renames.py --rev HEAD > Documentation/.renames.txt
+"""
+
+import argparse
+import itertools
+import os
+import subprocess
+import sys
+
+parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+parser.add_argument('--rev', default='HEAD', help='generate renames up to this revision')
+
+args = parser.parse_args()
+
+def normalize(path):
+    prefix = 'Documentation/'
+    suffix = '.rst'
+
+    assert path.startswith(prefix)
+    assert path.endswith(suffix)
+
+    return path[len(prefix):-len(suffix)]
+
+class Name(object):
+    def __init__(self, name):
+        self.names = [name]
+
+    def rename(self, new_name):
+        self.names.append(new_name)
+
+names = {
+}
+
+for line in subprocess.check_output([
+    'git', 'log',
+    '--reverse',
+    '--oneline',
+    '--find-renames',
+    '--diff-filter=RD',
+    '--name-status',
+    '--format=commit %H',
+    # ~v4.8-ish is when Sphinx/.rst was added in the first place
+    f'v4.8..{args.rev}',
+    '--',
+    'Documentation/'
+], text=True).splitlines():
+    # rename
+    if line.startswith('R'):
+        _, old, new = line[1:].split('\t', 2)
+
+        if old.endswith('.rst') and new.endswith('.rst'):
+            old = normalize(old)
+            new = normalize(new)
+
+            name = names.get(old)
+            if name is None:
+                name = Name(old)
+            else:
+                del names[old]
+
+            name.rename(new)
+            names[new] = name
+
+        continue
+
+    # delete
+    if line.startswith('D'):
+        _, old = line.split('\t', 1)
+
+        if old.endswith('.rst'):
+            old = normalize(old)
+
+            # TODO: we could save added/modified files as well and propose
+            # them as alternatives
+            name = names.get(old)
+            if name is None:
+                pass
+            else:
+                del names[old]
+
+        continue
+
+#
+# Get the set of current files so we can sanity check that we aren't
+# redirecting any of those
+#
+
+current_files = set()
+for line in subprocess.check_output([
+    'git', 'ls-tree',
+    '-r',
+    '--name-only',
+    args.rev,
+    'Documentation/',
+], text=True).splitlines():
+    if line.endswith('.rst'):
+        current_files.add(normalize(line))
+
+#
+# Format/group/output result
+#
+
+result = []
+for _, v in names.items():
+    old_names = v.names[:-1]
+    new_name = v.names[-1]
+
+    for old_name in old_names:
+        if old_name == new_name:
+            # A file was renamed to its new name twice; don't redirect that
+            continue
+
+        if old_name in current_files:
+            # A file was recreated with a former name; don't redirect those
+            continue
+
+        result.append((old_name, new_name))
+
+for old_name, new_name in sorted(result):
+    print(f"{old_name} {new_name}")
+===================================================
+
+get_abi.py
+===================================================
+#!/usr/bin/env python3
+# pylint: disable=R0903
+# Copyright(c) 2025: Mauro Carvalho Chehab <mchehab@kernel.org>.
+# SPDX-License-Identifier: GPL-2.0
+
+"""
+Parse ABI documentation and produce results from it.
+"""
+
+import argparse
+import logging
+import os
+import sys
+
+# Import Python modules
+
+LIB_DIR = "../lib/python"
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
+sys.path.insert(0, os.path.join(SRC_DIR, LIB_DIR))
+
+from abi.abi_parser import AbiParser                # pylint: disable=C0413
+from abi.abi_regex import AbiRegex                  # pylint: disable=C0413
+from abi.helpers import ABI_DIR, DEBUG_HELP         # pylint: disable=C0413
+from abi.system_symbols import SystemSymbols        # pylint: disable=C0413
+
+# Command line classes
+
+
+REST_DESC = """
+Produce output in ReST format.
+
+The output is done on two sections:
+
+- Symbols: show all parsed symbols in alphabetic order;
+- Files: cross reference the content of each file with the symbols on it.
+"""
+
+class AbiRest:
+    """Initialize an argparse subparser for rest output"""
+
+    def __init__(self, subparsers):
+        """Initialize argparse subparsers"""
+
+        parser = subparsers.add_parser("rest",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description=REST_DESC)
+
+        parser.add_argument("--enable-lineno",  action="store_true",
+                            help="enable lineno")
+        parser.add_argument("--raw", action="store_true",
+                            help="output text as contained in the ABI files. "
+                                 "It not used, output will contain dynamically"
+                                 " generated cross references when possible.")
+        parser.add_argument("--no-file", action="store_true",
+                            help="Don't the files section")
+        parser.add_argument("--show-hints", help="Show-hints")
+
+        parser.set_defaults(func=self.run)
+
+    def run(self, args):
+        """Run subparser"""
+
+        parser = AbiParser(args.dir, debug=args.debug)
+        parser.parse_abi()
+        parser.check_issues()
+
+        for t in parser.doc(args.raw, not args.no_file):
+            if args.enable_lineno:
+                print (f".. LINENO {t[1]}#{t[2]}\n\n")
+
+            print(t[0])
+
+class AbiValidate:
+    """Initialize an argparse subparser for ABI validation"""
+
+    def __init__(self, subparsers):
+        """Initialize argparse subparsers"""
+
+        parser = subparsers.add_parser("validate",
+                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                       description="list events")
+
+        parser.set_defaults(func=self.run)
+
+    def run(self, args):
+        """Run subparser"""
+
+        parser = AbiParser(args.dir, debug=args.debug)
+        parser.parse_abi()
+        parser.check_issues()
+
+
+class AbiSearch:
+    """Initialize an argparse subparser for ABI search"""
+
+    def __init__(self, subparsers):
+        """Initialize argparse subparsers"""
+
+        parser = subparsers.add_parser("search",
+                                       formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+                                       description="Search ABI using a regular expression")
+
+        parser.add_argument("expression",
+                            help="Case-insensitive search pattern for the ABI symbol")
+
+        parser.set_defaults(func=self.run)
+
+    def run(self, args):
+        """Run subparser"""
+
+        parser = AbiParser(args.dir, debug=args.debug)
+        parser.parse_abi()
+        parser.search_symbols(args.expression)
+
+UNDEFINED_DESC="""
+Check undefined ABIs on local machine.
+
+Read sysfs devnodes and check if the devnodes there are defined inside
+ABI documentation.
+
+The search logic tries to minimize the number of regular expressions to
+search per each symbol.
+
+By default, it runs on a single CPU, as Python support for CPU threads
+is still experimental, and multi-process runs on Python is very slow.
+
+On experimental tests, if the number of ABI symbols to search per devnode
+is contained on a limit of ~150 regular expressions, using a single CPU
+is a lot faster than using multiple processes. However, if the number of
+regular expressions to check is at the order of ~30000, using multiple
+CPUs speeds up the check.
+"""
+
+class AbiUndefined:
+    """
+    Initialize an argparse subparser for logic to check undefined ABI at
+    the current machine's sysfs
+    """
+
+    def __init__(self, subparsers):
+        """Initialize argparse subparsers"""
+
+        parser = subparsers.add_parser("undefined",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description=UNDEFINED_DESC)
+
+        parser.add_argument("-S", "--sysfs-dir", default="/sys",
+                            help="directory where sysfs is mounted")
+        parser.add_argument("-s", "--search-string",
+                            help="search string regular expression to limit symbol search")
+        parser.add_argument("-H", "--show-hints", action="store_true",
+                            help="Hints about definitions for missing ABI symbols.")
+        parser.add_argument("-j", "--jobs", "--max-workers", type=int, default=1,
+                            help="If bigger than one, enables multiprocessing.")
+        parser.add_argument("-c", "--max-chunk-size", type=int, default=50,
+                            help="Maximum number of chunk size")
+        parser.add_argument("-f", "--found", action="store_true",
+                            help="Also show found items. "
+                                 "Helpful to debug the parser."),
+        parser.add_argument("-d", "--dry-run", action="store_true",
+                            help="Don't actually search for undefined. "
+                                 "Helpful to debug the parser."),
+
+        parser.set_defaults(func=self.run)
+
+    def run(self, args):
+        """Run subparser"""
+
+        abi = AbiRegex(args.dir, debug=args.debug,
+                       search_string=args.search_string)
+
+        abi_symbols = SystemSymbols(abi=abi, hints=args.show_hints,
+                                    sysfs=args.sysfs_dir)
+
+        abi_symbols.check_undefined_symbols(dry_run=args.dry_run,
+                                            found=args.found,
+                                            max_workers=args.jobs,
+                                            chunk_size=args.max_chunk_size)
+
+
+def main():
+    """Main program"""
+
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+
+    parser.add_argument("-d", "--debug", type=int, default=0, help="debug level")
+    parser.add_argument("-D", "--dir", default=ABI_DIR, help=DEBUG_HELP)
+
+    subparsers = parser.add_subparsers()
+
+    AbiRest(subparsers)
+    AbiValidate(subparsers)
+    AbiSearch(subparsers)
+    AbiUndefined(subparsers)
+
+    args = parser.parse_args()
+
+    if args.debug:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
+    logging.basicConfig(level=level, format="[%(levelname)s] %(message)s")
+
+    if "func" in args:
+        args.func(args)
+    else:
+        sys.exit(f"Please specify a valid command for {sys.argv[0]}")
+
+
+# Call main method
+if __name__ == "__main__":
+    main()
+===================================================
+
+get_feat.py
+===================================================
+#!/usr/bin/env python3
+# pylint: disable=R0902,R0911,R0912,R0914,R0915
+# Copyright(c) 2025: Mauro Carvalho Chehab <mchehab@kernel.org>.
+# SPDX-License-Identifier: GPL-2.0
+
+
+"""
+Parse the Linux Feature files and produce a ReST book.
+"""
+
+import argparse
+import os
+import subprocess
+import sys
+
+from pprint import pprint
+
+LIB_DIR = "../../tools/lib/python"
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
+sys.path.insert(0, os.path.join(SRC_DIR, LIB_DIR))
+
+from feat.parse_features import ParseFeature                # pylint: disable=C0413
+
+SRCTREE = os.path.join(os.path.dirname(os.path.realpath(__file__)), "../..")
+DEFAULT_DIR = "Documentation/features"
+
+
+class GetFeature:
+    """Helper class to parse feature parsing parameters"""
+
+    @staticmethod
+    def get_current_arch():
+        """Detects the current architecture"""
+
+        proc = subprocess.run(["uname", "-m"], check=True,
+                              capture_output=True, text=True)
+
+        arch = proc.stdout.strip()
+        if arch in ["x86_64", "i386"]:
+            arch = "x86"
+        elif arch == "s390x":
+            arch = "s390"
+
+        return arch
+
+    def run_parser(self, args):
+        """Execute the feature parser"""
+
+        feat = ParseFeature(args.directory, args.debug, args.enable_fname)
+        data = feat.parse()
+
+        if args.debug > 2:
+            pprint(data)
+
+        return feat
+
+    def run_rest(self, args):
+        """
+        Generate tables in ReST format. Three types of tables are
+        supported, depending on the calling arguments:
+
+        - neither feature nor arch is passed: generates a full matrix;
+        - arch provided: generates a table of supported tables for the
+          guiven architecture, eventually filtered by feature;
+        - only feature provided: generates a table with feature details,
+          showing what architectures it is implemented.
+        """
+
+        feat = self.run_parser(args)
+
+        if args.arch:
+            rst = feat.output_arch_table(args.arch, args.feat)
+        elif args.feat:
+            rst = feat.output_feature(args.feat)
+        else:
+            rst = feat.output_matrix()
+
+        print(rst)
+
+    def run_current(self, args):
+        """
+        Instead of using a --arch parameter, get feature for the current
+        architecture.
+        """
+
+        args.arch = self.get_current_arch()
+
+        self.run_rest(args)
+
+    def run_list(self, args):
+        """
+        Generate a list of features for a given architecture, in a format
+        parseable by other scripts. The output format is not ReST.
+        """
+
+        if not args.arch:
+            args.arch = self.get_current_arch()
+
+        feat = self.run_parser(args)
+        msg = feat.list_arch_features(args.arch, args.feat)
+
+        print(msg)
+
+    def parse_arch(self, parser):
+        """Add a --arch parsing argument"""
+
+        parser.add_argument("--arch",
+                            help="Output features for an specific"
+                                 " architecture, optionally filtering for a "
+                                 "single specific feature.")
+
+    def parse_feat(self, parser):
+        """Add a --feat parsing argument"""
+
+        parser.add_argument("--feat", "--feature",
+                            help="Output features for a single specific "
+                                  "feature.")
+
+
+    def current_args(self, subparsers):
+        """Implementscurrent argparse subparser"""
+
+        parser = subparsers.add_parser("current",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description="Output table in ReST "
+                                                   "compatible ASCII format "
+                                                   "with features for this "
+                                                   "machine's architecture")
+
+        self.parse_feat(parser)
+        parser.set_defaults(func=self.run_current)
+
+    def rest_args(self, subparsers):
+        """Implement rest argparse subparser"""
+
+        parser = subparsers.add_parser("rest",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description="Output table(s) in ReST "
+                                                   "compatible ASCII format "
+                                                   "with features in ReST "
+                                                   "markup language. The "
+                                                   "output is affected by "
+                                                   "--arch or --feat/--feature"
+                                                   " flags.")
+
+        self.parse_arch(parser)
+        self.parse_feat(parser)
+        parser.set_defaults(func=self.run_rest)
+
+    def list_args(self, subparsers):
+        """Implement list argparse subparser"""
+
+        parser = subparsers.add_parser("list",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description="List features for this "
+                                                   "machine's architecture, "
+                                                   "using an easier to parse "
+                                                   "format. The output is "
+                                                   "affected by --arch flag.")
+
+        self.parse_arch(parser)
+        self.parse_feat(parser)
+        parser.set_defaults(func=self.run_list)
+
+    def validate_args(self, subparsers):
+        """Implement validate argparse subparser"""
+
+        parser = subparsers.add_parser("validate",
+                                       formatter_class=argparse.RawTextHelpFormatter,
+                                       description="Validate the contents of "
+                                                   "the files under "
+                                                   f"{DEFAULT_DIR}.")
+
+        parser.set_defaults(func=self.run_parser)
+
+    def parser(self):
+        """
+        Create an arparse with common options and several subparsers
+        """
+        parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter)
+
+        parser.add_argument("-d", "--debug", action="count", default=0,
+                            help="Put the script in verbose mode, useful for "
+                                 "debugging. Can be called multiple times, to "
+                                 "increase verbosity.")
+
+        parser.add_argument("--directory", "--dir", default=DEFAULT_DIR,
+                            help="Changes the location of the Feature files. "
+                                 f"By default, it uses the {DEFAULT_DIR} "
+                                 "directory.")
+
+        parser.add_argument("--enable-fname", action="store_true",
+                            help="Prints the file name of the feature files. "
+                                 "This can be used in order to track "
+                                 "dependencies during documentation build.")
+
+        subparsers = parser.add_subparsers()
+
+        self.current_args(subparsers)
+        self.rest_args(subparsers)
+        self.list_args(subparsers)
+        self.validate_args(subparsers)
+
+        args = parser.parse_args()
+
+        return args
+
+
+def main():
+    """Main program"""
+
+    feat = GetFeature()
+
+    args = feat.parser()
+
+    if "func" in args:
+        args.func(args)
+    else:
+        sys.exit(f"Please specify a valid command for {sys.argv[0]}")
+
+
+# Call main method
+if __name__ == "__main__":
+    main()
+===================================================
+
+kdoc_diff
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright(c) 2026: Mauro Carvalho Chehab <mchehab@kernel.org>.
+#
+# pylint: disable=R0903,R0912,R0913,R0914,R0915,R0917
+
+"""
+docdiff - Check differences between kernel‑doc output between two different
+commits.
+
+Examples
+--------
+
+Compare the kernel‑doc output between the last two 5.15 releases::
+
+    $ kdoc_diff v6.18..v6.19
+
+Both outputs are cached
+
+Force a complete documentation scan and clean any previous cache from
+6.19 to the current HEAD::
+
+    $ kdoc_diff 6.19.. --full --clean
+
+Check differences only on a single driver since origin/main::
+
+    $ kdoc_diff origin/main drivers/media
+
+Generate an YAML file and use it to check for regressions::
+
+    $ kdoc_diff HEAD~ drivers/media --regression
+
+
+"""
+
+import os
+import sys
+import argparse
+import subprocess
+import shutil
+import re
+import signal
+
+from glob import iglob
+
+
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+WORK_DIR = os.path.abspath(os.path.join(SRC_DIR, "../.."))
+
+KDOC_BINARY = os.path.join(SRC_DIR, "kernel-doc")
+KDOC_PARSER_TEST = os.path.join(WORK_DIR, "tools/unittests/test_kdoc_parser.py")
+
+CACHE_DIR = ".doc_diff_cache"
+YAML_NAME = "out.yaml"
+
+DIR_NAME = {
+    "full": os.path.join(CACHE_DIR, "full"),
+    "partial": os.path.join(CACHE_DIR, "partial"),
+    "no-cache": os.path.join(CACHE_DIR, "no_cache"),
+    "tmp": os.path.join(CACHE_DIR, "__tmp__"),
+}
+
+class GitHelper:
+    """Handles all Git operations"""
+
+    def __init__(self, work_dir=None):
+        self.work_dir = work_dir
+
+    def is_inside_repository(self):
+        """Check if we're inside a Git repository"""
+        try:
+            output = subprocess.check_output(["git", "rev-parse",
+                                              "--is-inside-work-tree"],
+                                             cwd=self.work_dir,
+                                             stderr=subprocess.STDOUT,
+                                             universal_newlines=True)
+
+            return output.strip() == "true"
+        except subprocess.CalledProcessError:
+            return False
+
+    def is_valid_commit(self, commit_hash):
+        """
+        Validate that a ref (branch, tag, commit hash, etc.) can be
+        resolved to a commit.
+        """
+        try:
+            subprocess.check_output(["git", "rev-parse", commit_hash],
+                                    cwd=self.work_dir,
+                                    stderr=subprocess.STDOUT)
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def get_short_hash(self, commit_hash):
+        """Get short commit hash"""
+        try:
+            return subprocess.check_output(["git", "rev-parse", "--short",
+                                            commit_hash],
+                                           cwd=self.work_dir,
+                                           stderr=subprocess.STDOUT,
+                                           universal_newlines=True).strip()
+        except subprocess.CalledProcessError:
+            return ""
+
+    def has_uncommitted_changes(self):
+        """Check for uncommitted changes"""
+        try:
+            subprocess.check_output(["git", "diff-index",
+                                     "--quiet", "HEAD", "--"],
+                                    cwd=self.work_dir,
+                                    stderr=subprocess.STDOUT)
+            return False
+        except subprocess.CalledProcessError:
+            return True
+
+    def get_current_branch(self):
+        """Get current branch name"""
+        return subprocess.check_output(["git", "branch", "--show-current"],
+                                        cwd=self.work_dir,
+                                        universal_newlines=True).strip()
+
+    def checkout_commit(self, commit_hash, quiet=True):
+        """Checkout a commit safely"""
+        args = ["git", "checkout", "-f"]
+        if quiet:
+            args.append("-q")
+        args.append(commit_hash)
+        try:
+            subprocess.check_output(args, cwd=self.work_dir,
+                                    stderr=subprocess.STDOUT)
+
+            # Double-check if branch actually switched
+            branch = self.get_short_hash("HEAD")
+            if commit_hash != branch:
+                raise RuntimeError(f"Branch changed to '{branch}' instead of '{commit_hash}'")
+
+            return True
+        except subprocess.CalledProcessError as e:
+            print(f"ERROR: Failed to checkout {commit_hash}: {e}",
+                  file=sys.stderr)
+            return False
+
+
+class CacheManager:
+    """Manages persistent cache directories"""
+
+    def __init__(self, work_dir):
+        self.work_dir = work_dir
+
+    def initialize(self):
+        """Create cache directories if they don't exist"""
+        for dir_path in DIR_NAME.values():
+            abs_path = os.path.join(self.work_dir, dir_path)
+            if not os.path.exists(abs_path):
+                os.makedirs(abs_path, exist_ok=True, mode=0o755)
+
+    def get_commit_cache(self, commit_hash, path):
+        """Generate cache path for a commit"""
+        hash_short = GitHelper(self.work_dir).get_short_hash(commit_hash)
+        if not hash_short:
+            hash_short = commit_hash
+
+        return os.path.join(path, hash_short)
+
+class KernelDocRunner:
+    """Runs kernel-doc documentation generator"""
+
+    def __init__(self, work_dir, kdoc_binary):
+        self.work_dir = work_dir
+        self.kdoc_binary = kdoc_binary
+        self.kdoc_files = None
+
+    def find_kdoc_references(self):
+        """Find all files marked with kernel-doc:: directives"""
+        if self.kdoc_files:
+            print("Using cached Kdoc refs")
+            return self.kdoc_files
+
+        print("Finding kernel-doc entries in Documentation...")
+
+        files = os.path.join(self.work_dir, 'Documentation/**/*.rst')
+        pattern = re.compile(r"^\.\.\s+kernel-doc::\s*(\S+)")
+        kdoc_files = set()
+
+        for file_path in iglob(files, recursive=True):
+            try:
+                with open(file_path, 'r', encoding='utf-8') as fp:
+                    for line in fp:
+                        match = pattern.match(line.strip())
+                        if match:
+                            kdoc_files.add(match.group(1))
+
+            except OSError:
+                continue
+
+        self.kdoc_files = list(kdoc_files)
+
+        return self.kdoc_files
+
+    def gen_yaml(self, yaml_file, kdoc_files):
+        """Runs kernel-doc to generate a yaml file with man and rst."""
+        cmd = [self.kdoc_binary, "--man", "--rst", "--yaml", yaml_file]
+        cmd += kdoc_files
+
+        print(f"YAML regression test file will be stored at: {yaml_file}")
+
+        try:
+            subprocess.check_call(cmd, cwd=self.work_dir,
+                                  stdout=subprocess.DEVNULL,
+                                  stderr=subprocess.DEVNULL)
+        except subprocess.CalledProcessError:
+            return False
+
+        return True
+
+    def run_unittest(self, yaml_file):
+        """Run unit tests with the generated yaml file"""
+        cmd = [KDOC_PARSER_TEST, "-q", "--yaml", yaml_file]
+        result = subprocess.run(cmd, cwd=self.work_dir)
+
+        if result.returncode:
+            print("To check for problems, try to run it again with -v\n")
+            print("Use -k <regex> to filter results\n\n\t$", end="")
+            print(" ".join(cmd) + "\n")
+
+        return True
+
+    def normal_run(self, tmp_dir, output_dir, kdoc_files):
+        """Generate man, rst and errors, storing them at tmp_dir."""
+        os.makedirs(tmp_dir, exist_ok=True)
+
+        try:
+            with open(os.path.join(tmp_dir, "man.log"), "w", encoding="utf-8") as out:
+                subprocess.check_call([self.kdoc_binary, "--man"] + kdoc_files,
+                                      cwd=self.work_dir,
+                                      stdout=out, stderr=subprocess.DEVNULL)
+
+            with open(os.path.join(tmp_dir, "rst.log"), "w", encoding="utf-8") as out:
+                with open(os.path.join(tmp_dir, "err.log"), "w", encoding="utf-8") as err:
+                    subprocess.check_call([self.kdoc_binary, "--rst"] + kdoc_files,
+                                          cwd=self.work_dir,
+                                          stdout=out, stderr=err)
+        except subprocess.CalledProcessError:
+            return False
+
+        if output_dir:
+            os.replace(tmp_dir, output_dir)
+
+        return True
+
+    def run(self, commit_hash, tmp_dir, output_dir, kdoc_files, is_regression,
+            is_end):
+        """Run kernel-doc on its several ways"""
+        if not kdoc_files:
+            raise RuntimeError("No kernel-doc references found")
+
+        git_helper = GitHelper(self.work_dir)
+        if not git_helper.checkout_commit(commit_hash, quiet=True):
+            raise RuntimeError(f"ERROR: can't checkout commit {commit_hash}")
+
+        print(f"Processing {commit_hash}...")
+
+        if not is_regression:
+            return self.normal_run(tmp_dir, output_dir, kdoc_files)
+
+        yaml_file = os.path.join(tmp_dir, YAML_NAME)
+
+        if not is_end:
+            return self.gen_yaml(yaml_file, kdoc_files)
+
+        return self.run_unittest(yaml_file)
+
+class DiffManager:
+    """Compare documentation output directories with an external diff."""
+    def __init__(self, diff_tool="diff", diff_args=None):
+        self.diff_tool = diff_tool
+        # default: unified, no context, ignore whitespace changes
+        self.diff_args = diff_args or ["-u0", "-w"]
+
+    def diff_directories(self, dir1, dir2):
+        """Compare two directories using an external diff."""
+        print(f"\nDiffing {dir1} and {dir2}:")
+
+        dir1_files = set()
+        dir2_files = set()
+        has_diff = False
+
+        for root, _, files in os.walk(dir1):
+            for file in files:
+                dir1_files.add(os.path.relpath(os.path.join(root, file), dir1))
+        for root, _, files in os.walk(dir2):
+            for file in files:
+                dir2_files.add(os.path.relpath(os.path.join(root, file), dir2))
+
+        common_files = sorted(dir1_files & dir2_files)
+        for file in common_files:
+            f1 = os.path.join(dir1, file)
+            f2 = os.path.join(dir2, file)
+
+            cmd = [self.diff_tool] + self.diff_args + [f1, f2]
+            try:
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, check=False
+                )
+                if result.stdout:
+                    has_diff = True
+                    print(f"\n{file}")
+                    print(result.stdout, end="")
+            except FileNotFoundError:
+                print(f"ERROR: {self.diff_tool} not found")
+                sys.exit(1)
+
+        # Show files that exist only in one directory
+        only_in_dir1 = dir1_files - dir2_files
+        only_in_dir2 = dir2_files - dir1_files
+        if only_in_dir1 or only_in_dir2:
+            has_diff = True
+            print("\nDifferential files:")
+            for f in sorted(only_in_dir1):
+                print(f"  - {f} (only in {dir1})")
+            for f in sorted(only_in_dir2):
+                print(f"  + {f} (only in {dir2})")
+
+        if not has_diff:
+            print("\nNo differences between those two commits")
+
+
+class SignalHandler():
+    """Signal handler class."""
+
+    def restore(self, force_exit=False):
+        """Restore original HEAD state."""
+        if self.restored:
+            return
+
+        print(f"Restoring original branch: {self.original_head}")
+        try:
+            subprocess.check_call(
+                ["git", "checkout", "-f", self.original_head],
+                cwd=self.git_helper.work_dir,
+                stderr=subprocess.STDOUT,
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Failed to restore: {e}", file=sys.stderr)
+
+        for sig, handler in self.old_handler.items():
+            signal.signal(sig, handler)
+
+        self.restored = True
+
+        if force_exit:
+            sys.exit(1)
+
+    def signal_handler(self, sig, _):
+        """Handle interrupt signals."""
+        print(f"\nSignal {sig} received. Restoring original state...")
+
+        self.restore(force_exit=True)
+
+    def __enter__(self):
+        """Allow using it via with command."""
+        for sig in [signal.SIGINT, signal.SIGTERM]:
+            self.old_handler[sig] = signal.getsignal(sig)
+            signal.signal(sig, self.signal_handler)
+
+        return self
+
+    def __exit__(self, *args):
+        """Restore signals at the end of with block."""
+        self.restore()
+
+    def __init__(self, git_helper, original_head):
+        self.git_helper = git_helper
+        self.original_head = original_head
+        self.old_handler = {}
+        self.restored = False
+
+def parse_commit_range(value):
+    """Handle a commit range."""
+    if ".." not in value:
+        begin = value
+        end = "HEAD"
+    else:
+        begin, _, end = value.partition("..")
+        if not end:
+            end = "HEAD"
+
+    if not begin:
+        raise argparse.ArgumentTypeError("Need a commit begginning")
+
+
+    print(f"Range: {begin} to {end}")
+
+    return begin, end
+
+
+def main():
+    """Main code"""
+    parser = argparse.ArgumentParser(description="Compare kernel documentation between commits")
+    parser.add_argument("commits", type=parse_commit_range,
+                        help="commit range like old..new")
+    parser.add_argument("files", nargs="*",
+                        help="files to process – if supplied the --full flag is ignored")
+
+    parser.add_argument("--full", "-f", action="store_true",
+                        help="Force a full scan of Documentation/*")
+
+    parser.add_argument("--regression", "-r", action="store_true",
+                        help="Use YAML format to check for regressions")
+
+    parser.add_argument("--work-dir", "-w", default=WORK_DIR,
+                        help="work dir (default: %(default)s)")
+
+    parser.add_argument("--clean", "-c", action="store_true",
+                        help="Clean caches")
+
+    args = parser.parse_args()
+
+    if args.files and args.full:
+        raise argparse.ArgumentError(args.full,
+                                     "cannot combine '--full' with an explicit file list")
+
+    work_dir = os.path.abspath(args.work_dir)
+
+    # Initialize cache
+    cache = CacheManager(work_dir)
+    cache.initialize()
+
+    # Validate git repository
+    git_helper = GitHelper(work_dir)
+    if not git_helper.is_inside_repository():
+        raise RuntimeError("Must run inside Git repository")
+
+    old_commit, new_commit = args.commits
+
+    old_commit = git_helper.get_short_hash(old_commit)
+    new_commit = git_helper.get_short_hash(new_commit)
+
+    # Validate commits
+    for commit in [old_commit, new_commit]:
+        if not git_helper.is_valid_commit(commit):
+            raise RuntimeError(f"Commit '{commit}' does not exist")
+
+    # Check for uncommitted changes
+    if git_helper.has_uncommitted_changes():
+        raise RuntimeError("Uncommitted changes present. Commit or stash first.")
+
+    runner = KernelDocRunner(git_helper.work_dir, KDOC_BINARY)
+
+    # Get files to be parsed
+    cache_msg = " (results will be cached)"
+    if args.full:
+        kdoc_files = ["."]
+        diff_type = "full"
+        print(f"Parsing all files at {work_dir}")
+    if not args.files:
+        diff_type = "partial"
+        kdoc_files = runner.find_kdoc_references()
+        print(f"Parsing files with kernel-doc markups at {work_dir}/Documentation")
+    else:
+        diff_type = "no-cache"
+        cache_msg = ""
+        kdoc_files = args.files
+
+    tmp_dir = DIR_NAME["tmp"]
+    out_path = DIR_NAME[diff_type]
+
+    if not args.regression:
+        print(f"Output will be stored at: {out_path}{cache_msg}")
+
+    # Just in case - should never happen in practice
+    if not kdoc_files:
+        raise argparse.ArgumentError(args.files,
+                                        "No kernel-doc references found")
+
+    original_head = git_helper.get_current_branch()
+
+    old_cache = cache.get_commit_cache(old_commit, out_path)
+    new_cache = cache.get_commit_cache(new_commit, out_path)
+
+    with SignalHandler(git_helper, original_head):
+        if args.clean or diff_type == "no-cache":
+            for cache_dir in [old_cache, new_cache]:
+                if cache_dir and os.path.exists(cache_dir):
+                    shutil.rmtree(cache_dir)
+
+        if args.regression or not os.path.exists(old_cache):
+            old_success = runner.run(old_commit, tmp_dir, old_cache, kdoc_files,
+                                    args.regression, False)
+        else:
+            old_success = True
+
+        if args.regression or not os.path.exists(new_cache):
+            new_success = runner.run(new_commit, tmp_dir, new_cache, kdoc_files,
+                                    args.regression, True)
+        else:
+            new_success = True
+
+    if not (old_success and new_success):
+        raise RuntimeError("Failed to generate documentation")
+
+    if not args.regression:
+        diff_manager = DiffManager()
+        diff_manager.diff_directories(old_cache, new_cache)
+
+if __name__ == "__main__":
+    main()
+===================================================
+
+kernel-doc
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright(c) 2025: Mauro Carvalho Chehab <mchehab@kernel.org>.
+#
+# pylint: disable=C0103,R0912,R0914,R0915
+#
+# NOTE: While kernel-doc requires at least version 3.6 to run, the
+#       command line should work with Python 3.2+ (tested with 3.4).
+#       The rationale is that it shall fail gracefully during Kernel
+#       compilation with older Kernel versions. Due to that:
+#       - encoding line is needed here;
+#       - f-strings cannot be used in this file.
+#       - libraries that require newer versions can only be included
+#         after the Python version has been checked.
+#
+# Converted from the kernel-doc script originally written in Perl
+# under GPLv2, copyrighted since 1998 by the following authors:
+#
+#    Aditya Srivastava <yashsri421@gmail.com>
+#    Akira Yokosawa <akiyks@gmail.com>
+#    Alexander A. Klimov <grandmaster@al2klimov.de>
+#    Alexander Lobakin <aleksander.lobakin@intel.com>
+#    André Almeida <andrealmeid@igalia.com>
+#    Andy Shevchenko <andriy.shevchenko@linux.intel.com>
+#    Anna-Maria Behnsen <anna-maria@linutronix.de>
+#    Armin Kuster <akuster@mvista.com>
+#    Bart Van Assche <bart.vanassche@sandisk.com>
+#    Ben Hutchings <ben@decadent.org.uk>
+#    Borislav Petkov <bbpetkov@yahoo.de>
+#    Chen-Yu Tsai <wenst@chromium.org>
+#    Coco Li <lixiaoyan@google.com>
+#    Conchúr Navid <conchur@web.de>
+#    Daniel Santos <daniel.santos@pobox.com>
+#    Danilo Cesar Lemes de Paula <danilo.cesar@collabora.co.uk>
+#    Dan Luedtke <mail@danrl.de>
+#    Donald Hunter <donald.hunter@gmail.com>
+#    Gabriel Krisman Bertazi <krisman@collabora.co.uk>
+#    Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+#    Harvey Harrison <harvey.harrison@gmail.com>
+#    Horia Geanta <horia.geanta@freescale.com>
+#    Ilya Dryomov <idryomov@gmail.com>
+#    Jakub Kicinski <kuba@kernel.org>
+#    Jani Nikula <jani.nikula@intel.com>
+#    Jason Baron <jbaron@redhat.com>
+#    Jason Gunthorpe <jgg@nvidia.com>
+#    Jérémy Bobbio <lunar@debian.org>
+#    Johannes Berg <johannes.berg@intel.com>
+#    Johannes Weiner <hannes@cmpxchg.org>
+#    Jonathan Cameron <Jonathan.Cameron@huawei.com>
+#    Jonathan Corbet <corbet@lwn.net>
+#    Jonathan Neuschäfer <j.neuschaefer@gmx.net>
+#    Kamil Rytarowski <n54@gmx.com>
+#    Kees Cook <kees@kernel.org>
+#    Laurent Pinchart <laurent.pinchart@ideasonboard.com>
+#    Levin, Alexander (Sasha Levin) <alexander.levin@verizon.com>
+#    Linus Torvalds <torvalds@linux-foundation.org>
+#    Lucas De Marchi <lucas.demarchi@profusion.mobi>
+#    Mark Rutland <mark.rutland@arm.com>
+#    Markus Heiser <markus.heiser@darmarit.de>
+#    Martin Waitz <tali@admingilde.org>
+#    Masahiro Yamada <masahiroy@kernel.org>
+#    Matthew Wilcox <willy@infradead.org>
+#    Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+#    Michal Wajdeczko <michal.wajdeczko@intel.com>
+#    Michael Zucchi
+#    Mike Rapoport <rppt@linux.ibm.com>
+#    Niklas Söderlund <niklas.soderlund@corigine.com>
+#    Nishanth Menon <nm@ti.com>
+#    Paolo Bonzini <pbonzini@redhat.com>
+#    Pavan Kumar Linga <pavan.kumar.linga@intel.com>
+#    Pavel Pisa <pisa@cmp.felk.cvut.cz>
+#    Peter Maydell <peter.maydell@linaro.org>
+#    Pierre-Louis Bossart <pierre-louis.bossart@linux.intel.com>
+#    Randy Dunlap <rdunlap@infradead.org>
+#    Richard Kennedy <richard@rsk.demon.co.uk>
+#    Rich Walker <rw@shadow.org.uk>
+#    Rolf Eike Beer <eike-kernel@sf-tec.de>
+#    Sakari Ailus <sakari.ailus@linux.intel.com>
+#    Silvio Fricke <silvio.fricke@gmail.com>
+#    Simon Huggins
+#    Tim Waugh <twaugh@redhat.com>
+#    Tomasz Warniełło <tomasz.warniello@gmail.com>
+#    Utkarsh Tripathi <utripathi2002@gmail.com>
+#    valdis.kletnieks@vt.edu <valdis.kletnieks@vt.edu>
+#    Vegard Nossum <vegard.nossum@oracle.com>
+#    Will Deacon <will.deacon@arm.com>
+#    Yacine Belkadi <yacine.belkadi.1@gmail.com>
+#    Yujie Liu <yujie.liu@intel.com>
+
+"""
+Print formatted kernel documentation to stdout.
+
+Read C language source or header FILEs, extract embedded
+documentation comments, and print formatted documentation
+to standard output.
+
+The documentation comments are identified by the ``/**``
+opening comment mark.
+
+See Documentation/doc-guide/kernel-doc.rst for the
+documentation comment syntax.
+"""
+
+import argparse
+import logging
+import os
+import sys
+
+# Import Python modules
+
+LIB_DIR = "../lib/python"
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
+sys.path.insert(0, os.path.join(SRC_DIR, LIB_DIR))
+
+WERROR_RETURN_CODE = 3
+
+DESC = """
+Read C language source or header FILEs, extract embedded documentation comments,
+and print formatted documentation to standard output.
+
+The documentation comments are identified by the "/**" opening comment mark.
+
+See Documentation/doc-guide/kernel-doc.rst for the documentation comment syntax.
+"""
+
+EXPORT_FILE_DESC = """
+Specify an additional FILE in which to look for EXPORT_SYMBOL information.
+
+May be used multiple times.
+"""
+
+EXPORT_DESC = """
+Only output documentation for symbols that have been
+exported using EXPORT_SYMBOL() and related macros in any input
+FILE or -export-file FILE.
+"""
+
+INTERNAL_DESC = """
+Only output documentation for symbols that have NOT been
+exported using EXPORT_SYMBOL() and related macros in any input
+FILE or -export-file FILE.
+"""
+
+FUNCTION_DESC = """
+Only output documentation for the given function or DOC: section
+title. All other functions and DOC: sections are ignored.
+
+May be used multiple times.
+"""
+
+NOSYMBOL_DESC = """
+Exclude the specified symbol from the output documentation.
+
+May be used multiple times.
+"""
+
+FILES_DESC = """
+Header and C source files to be parsed.
+"""
+
+WARN_CONTENTS_BEFORE_SECTIONS_DESC = """
+Warn if there are contents before sections (deprecated).
+
+This option is kept just for backward-compatibility, but it does nothing,
+neither here nor at the original Perl script.
+"""
+
+EPILOG = """
+The return value is:
+
+- 0: success or Python version is not compatible with
+kernel-doc.  If -Werror is not used, it will also
+return 0 if there are issues at kernel-doc markups;
+
+- 1: an abnormal condition happened;
+
+- 2: argparse issued an error;
+
+- 3: When -Werror is used, it means that one or more unfiltered parse
+     warnings happened.
+"""
+
+class MsgFormatter(logging.Formatter):
+    """
+    Helper class to capitalize errors and warnings, the same way
+    the venerable (now retired) kernel-doc.pl used to do.
+    """
+
+    def format(self, record):
+        record.levelname = record.levelname.capitalize()
+        return logging.Formatter.format(self, record)
+
+def main():
+    """
+    Main program.
+
+    """
+
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+                                     description=DESC, epilog=EPILOG)
+
+    #
+    # Normal arguments
+    #
+    parser.add_argument("-v", "-verbose", "--verbose", action="store_true",
+                        help="Verbose output, more warnings and other information.")
+
+    parser.add_argument("-d", "-debug", "--debug", action="store_true",
+                        help="Enable debug messages")
+
+    parser.add_argument("-M", "-modulename", "--modulename",
+                        help="Allow setting a module name at the output.")
+
+    parser.add_argument("-l", "-enable-lineno", "--enable_lineno",
+                        action="store_true",
+                        help="Enable line number output (only in ReST mode)")
+
+    #
+    # Arguments to control the warning behavior
+    #
+    parser.add_argument("-Wreturn", "--wreturn", action="store_true",
+                        help="Warns about the lack of a return markup on functions.")
+
+    parser.add_argument("-Wshort-desc", "-Wshort-description", "--wshort-desc",
+                        action="store_true",
+                        help="Warns if initial short description is missing")
+
+    parser.add_argument("-Wcontents-before-sections",
+                        "--wcontents-before-sections", action="store_true",
+                        help=WARN_CONTENTS_BEFORE_SECTIONS_DESC)
+
+    parser.add_argument("-Wall", "--wall", action="store_true",
+                        help="Enable all types of warnings")
+
+    parser.add_argument("-Werror", "--werror", action="store_true",
+                        help="Treat warnings as errors.")
+
+    parser.add_argument("-export-file", "--export-file", action='append',
+                        help=EXPORT_FILE_DESC)
+
+    #
+    # Output format
+    #
+    out_fmt = parser.add_argument_group("Output format selection (mutually exclusive)")
+
+    out_fmt.add_argument("-m", "-man", "--man", action="store_true",
+                         help="Output troff manual page format.")
+    out_fmt.add_argument("-r", "-rst", "--rst", action="store_true",
+                         help="Output reStructuredText format (default).")
+    out_fmt.add_argument("-N", "-none", "--none", action="store_true",
+                         help="Do not output documentation, only warnings.")
+
+    out_fmt.add_argument("-y", "--yaml-file", "--yaml",
+                         help="Stores kernel-doc output on a yaml file.")
+    out_fmt.add_argument("-k", "--kdoc-item", "--kdoc", action="store_true",
+                         help="Store KdocItem inside yaml file. Ued together with --yaml.")
+
+
+    #
+    # Output selection mutually-exclusive group
+    #
+    sel_group = parser.add_argument_group("Output selection (mutually exclusive)")
+    sel_mut = sel_group.add_mutually_exclusive_group()
+
+    sel_mut.add_argument("-e", "-export", "--export", action='store_true',
+                         help=EXPORT_DESC)
+
+    sel_mut.add_argument("-i", "-internal", "--internal", action='store_true',
+                         help=INTERNAL_DESC)
+
+    sel_mut.add_argument("-s", "-function", "--symbol", action='append',
+                         help=FUNCTION_DESC)
+
+    #
+    # Those are valid for all 3 types of filter
+    #
+    parser.add_argument("-n", "-nosymbol", "--nosymbol", action='append',
+                        help=NOSYMBOL_DESC)
+
+    parser.add_argument("-D", "-no-doc-sections", "--no-doc-sections",
+                        action='store_true', help="Don't output DOC sections")
+
+    parser.add_argument("files", metavar="FILE",
+                        nargs="+", help=FILES_DESC)
+
+    args = parser.parse_args()
+
+    if args.wall:
+        args.wreturn = True
+        args.wshort_desc = True
+        args.wcontents_before_sections = True
+
+    logger = logging.getLogger()
+
+    if not args.debug:
+        logger.setLevel(logging.INFO)
+    else:
+        logger.setLevel(logging.DEBUG)
+
+    formatter = MsgFormatter('%(levelname)s: %(message)s')
+
+    handler = logging.StreamHandler()
+    handler.setFormatter(formatter)
+
+    logger.addHandler(handler)
+
+    python_ver = sys.version_info[:2]
+    if python_ver < (3,6):
+        #
+        # Depending on the Kernel configuration, kernel-doc --none is called at
+        # build time. As we don't want to break compilation due to the
+        # usage of an old Python version, return 0 here.
+        #
+        if args.none:
+            logger.error("Python 3.6 or later is required by kernel-doc. Skipping checks")
+            sys.exit(0)
+
+        sys.exit("Python 3.6 or later is required by kernel-doc. Aborting.")
+
+    if python_ver < (3,7):
+        logger.warning("Python 3.7 or later is required for correct results")
+
+    #
+    # Import kernel-doc libraries only after checking the Python version
+    #
+    from kdoc.kdoc_files import KernelFiles             # pylint: disable=C0415
+    from kdoc.kdoc_output import RestFormat, ManFormat  # pylint: disable=C0415
+
+    yaml_content = set()
+    if args.yaml_file:
+        out_style = None
+
+        if args.man:
+            yaml_content |= {"man"}
+
+        if args.rst:
+            yaml_content |= {"rst"}
+
+        if args.kdoc_item or not yaml_content:
+            yaml_content |= {"KdocItem"}
+
+    else:
+        n_outputs = 0
+
+        if args.man:
+            out_style = ManFormat(modulename=args.modulename)
+            n_outputs += 1
+
+        if args.none:
+            out_style = None
+            n_outputs += 1
+
+        if  args.rst or n_outputs == 0:
+            n_outputs += 1
+            out_style = RestFormat()
+
+        if n_outputs > 1:
+             parser.error("Those arguments are muttually exclusive: --man, --rst, --none, except when generating a YAML file.")
+
+        elif not n_outputs:
+            out_style = RestFormat()
+
+    kfiles = KernelFiles(verbose=args.verbose,
+                         yaml_file=args.yaml_file, yaml_content=yaml_content,
+                         out_style=out_style, werror=args.werror,
+                         wreturn=args.wreturn, wshort_desc=args.wshort_desc,
+                         wcontents_before_sections=args.wcontents_before_sections)
+
+    kfiles.parse(args.files, export_file=args.export_file)
+
+    for t in kfiles.msg(enable_lineno=args.enable_lineno, export=args.export,
+                        internal=args.internal, symbol=args.symbol,
+                        nosymbol=args.nosymbol, export_file=args.export_file,
+                        no_doc_sections=args.no_doc_sections):
+        msg = t[1]
+        if msg:
+            print(msg)
+
+    error_count = kfiles.errors
+    if not error_count:
+        sys.exit(0)
+
+    if args.werror:
+        print("%s warnings as errors" % error_count)    # pylint: disable=C0209
+        sys.exit(WERROR_RETURN_CODE)
+
+    if args.verbose:
+        print("%s errors" % error_count)                # pylint: disable=C0209
+
+    sys.exit(0)
+
+#
+# Call main method
+#
+if __name__ == "__main__":
+    main()
+===================================================
+
+list-arch.sh
+===================================================
+# SPDX-License-Identifier: GPL-2.0
+#
+# Small script that visualizes the kernel feature support status
+# of an architecture.
+#
+# (If no arguments are given then it will print the host architecture's status.)
+#
+
+ARCH=${1:-$(uname -m | sed 's/x86_64/x86/' | sed 's/i386/x86/' | sed 's/s390x/s390/')}
+
+$(dirname $0)/get_feat.pl list --arch $ARCH
+===================================================
+
+parse-headers.py
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (c) 2016, 2025 by Mauro Carvalho Chehab <mchehab@kernel.org>.
+# pylint: disable=C0103
+
+"""
+Convert a C header or source file ``FILE_IN``, into a ReStructured Text
+included via ..parsed-literal block with cross-references for the
+documentation files that describe the API. It accepts an optional
+``FILE_RULES`` file to describes what elements will be either ignored or
+be pointed to a non-default reference type/name.
+
+The output is written at ``FILE_OUT``.
+
+It is capable of identifying defines, functions, structs, typedefs,
+enums and enum symbols and create cross-references for all of them.
+It is also capable of distinguish #define used for specifying a Linux
+ioctl.
+
+The optional ``FILE_RULES`` contains a set of rules like:
+
+    ignore ioctl VIDIOC_ENUM_FMT
+    replace ioctl VIDIOC_DQBUF vidioc_qbuf
+    replace define V4L2_EVENT_MD_FL_HAVE_FRAME_SEQ :c:type:`v4l2_event_motion_det`
+"""
+
+import argparse, sys
+import os.path
+
+src_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(src_dir, '../lib/python'))
+from kdoc.parse_data_structs import ParseDataStructs
+from kdoc.enrich_formatter import EnrichFormatter
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=EnrichFormatter)
+
+    parser.add_argument("-d", "--debug", action="count", default=0,
+                        help="Increase debug level. Can be used multiple times")
+    parser.add_argument("-t", "--toc", action="store_true",
+                        help="instead of a literal block, outputs a TOC table at the RST file")
+
+    parser.add_argument("file_in", help="Input C file")
+    parser.add_argument("file_out", help="Output RST file")
+    parser.add_argument("file_rules", nargs="?",
+                        help="Exceptions file (optional)")
+
+    args = parser.parse_args()
+
+    parser = ParseDataStructs(debug=args.debug)
+    parser.parse_file(args.file_in, args.file_rules)
+
+    parser.debug_print()
+    parser.write_output(args.file_in, args.file_out, args.toc)
+
+
+if __name__ == "__main__":
+    main()
+===================================================
+
+sphinx-build-wrapper
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright (C) 2025 Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+#
+# pylint: disable=R0902, R0912, R0913, R0914, R0915, R0917, C0103
+#
+# Converted from docs Makefile and parallel-wrapper.sh, both under
+# GPLv2, copyrighted since 2008 by the following authors:
+#
+#    Akira Yokosawa <akiyks@gmail.com>
+#    Arnd Bergmann <arnd@arndb.de>
+#    Breno Leitao <leitao@debian.org>
+#    Carlos Bilbao <carlos.bilbao@amd.com>
+#    Dave Young <dyoung@redhat.com>
+#    Donald Hunter <donald.hunter@gmail.com>
+#    Geert Uytterhoeven <geert+renesas@glider.be>
+#    Jani Nikula <jani.nikula@intel.com>
+#    Jan Stancek <jstancek@redhat.com>
+#    Jonathan Corbet <corbet@lwn.net>
+#    Joshua Clayton <stillcompiling@gmail.com>
+#    Kees Cook <keescook@chromium.org>
+#    Linus Torvalds <torvalds@linux-foundation.org>
+#    Magnus Damm <damm+renesas@opensource.se>
+#    Masahiro Yamada <masahiroy@kernel.org>
+#    Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+#    Maxim Cournoyer <maxim.cournoyer@gmail.com>
+#    Peter Foley <pefoley2@pefoley.com>
+#    Randy Dunlap <rdunlap@infradead.org>
+#    Rob Herring <robh@kernel.org>
+#    Shuah Khan <shuahkh@osg.samsung.com>
+#    Thorsten Blum <thorsten.blum@toblux.com>
+#    Tomas Winkler <tomas.winkler@intel.com>
+
+
+"""
+Sphinx build wrapper that handles Kernel-specific business rules:
+
+- it gets the Kernel build environment vars;
+- it determines what's the best parallelism;
+- it handles SPHINXDIRS
+
+This tool ensures that MIN_PYTHON_VERSION is satisfied. If version is
+below that, it seeks for a new Python version. If found, it re-runs using
+the newer version.
+"""
+
+import argparse
+import locale
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+
+from concurrent import futures
+from glob import glob
+
+
+LIB_DIR = "../lib/python"
+SRC_DIR = os.path.dirname(os.path.realpath(__file__))
+
+sys.path.insert(0, os.path.join(SRC_DIR, LIB_DIR))
+
+from kdoc.python_version import PythonVersion
+from kdoc.latex_fonts import LatexFontChecker
+from jobserver import JobserverExec         # pylint: disable=C0413,C0411,E0401
+
+#
+#  Some constants
+#
+VENV_DEFAULT = "sphinx_latest"
+MIN_PYTHON_VERSION = PythonVersion("3.7").version
+PAPER = ["", "a4", "letter"]
+
+TARGETS = {
+    "cleandocs":     { "builder": "clean" },
+    "linkcheckdocs": { "builder": "linkcheck" },
+    "htmldocs":      { "builder": "html" },
+    "epubdocs":      { "builder": "epub",    "out_dir": "epub" },
+    "texinfodocs":   { "builder": "texinfo", "out_dir": "texinfo" },
+    "infodocs":      { "builder": "texinfo", "out_dir": "texinfo" },
+    "mandocs":       { "builder": "man",     "out_dir": "man" },
+    "latexdocs":     { "builder": "latex",   "out_dir": "latex" },
+    "pdfdocs":       { "builder": "latex",   "out_dir": "latex" },
+    "xmldocs":       { "builder": "xml",     "out_dir": "xml" },
+}
+
+
+#
+# SphinxBuilder class
+#
+
+class SphinxBuilder:
+    """
+    Handles a sphinx-build target, adding needed arguments to build
+    with the Kernel.
+    """
+
+    def get_path(self, path, use_cwd=False, abs_path=False):
+        """
+        Ancillary routine to handle patches the right way, as shell does.
+
+        It first expands "~" and "~user". Then, if patch is not absolute,
+        join self.srctree. Finally, if requested, convert to abspath.
+        """
+
+        path = os.path.expanduser(path)
+        if not path.startswith("/"):
+            if use_cwd:
+                base = os.getcwd()
+            else:
+                base = self.srctree
+
+            path = os.path.join(base, path)
+
+        if abs_path:
+            return os.path.abspath(path)
+
+        return path
+
+    def check_rust(self, sphinxdirs):
+        """
+        Checks if Rust is enabled
+        """
+        config = os.path.join(self.srctree, ".config")
+
+        if not {'.', 'rust'}.intersection(sphinxdirs):
+            return False
+
+        if not os.path.isfile(config):
+            return False
+
+        re_rust = re.compile(r"CONFIG_RUST=(m|y)")
+
+        try:
+            with open(config, "r", encoding="utf-8") as fp:
+                for line in fp:
+                    if re_rust.match(line):
+                        return True
+
+        except OSError as e:
+            print(f"Failed to open {config}", file=sys.stderr)
+            return False
+
+        return False
+
+    def get_sphinx_extra_opts(self, n_jobs):
+        """
+        Get the number of jobs to be used for docs build passed via command
+        line and desired sphinx verbosity.
+
+        The number of jobs can be on different places:
+
+        1) It can be passed via "-j" argument;
+        2) The SPHINXOPTS="-j8" env var may have "-j";
+        3) if called via GNU make, -j specifies the desired number of jobs.
+           with GNU makefile, this number is available via POSIX jobserver;
+        4) if none of the above is available, it should default to "-jauto",
+           and let sphinx decide the best value.
+        """
+
+        #
+        # SPHINXOPTS env var, if used, contains extra arguments to be used
+        # by sphinx-build time. Among them, it may contain sphinx verbosity
+        # and desired number of parallel jobs.
+        #
+        parser = argparse.ArgumentParser()
+        parser.add_argument('-j', '--jobs', type=int)
+        parser.add_argument('-q', '--quiet', action='store_true')
+        parser.add_argument('-v', '--verbose', default=0, action='count')
+
+        #
+        # Other sphinx-build arguments go as-is, so place them
+        # at self.sphinxopts, using shell parser
+        #
+        sphinxopts = shlex.split(os.environ.get("SPHINXOPTS", ""))
+
+        #
+        # Build a list of sphinx args, honoring verbosity here if specified
+        #
+
+        sphinx_args, self.sphinxopts = parser.parse_known_args(sphinxopts)
+
+        verbose = sphinx_args.verbose
+        if self.verbose:
+            verbose += 1
+
+        if sphinx_args.quiet is True:
+            verbose = 0
+
+        #
+        # If the user explicitly sets "-j" at command line, use it.
+        # Otherwise, pick it from SPHINXOPTS args
+        #
+        if n_jobs:
+            self.n_jobs = n_jobs
+        elif sphinx_args.jobs:
+            self.n_jobs = sphinx_args.jobs
+        else:
+            self.n_jobs = None
+
+        if verbose < 1:
+            self.sphinxopts += ["-q"]
+        else:
+            for i in range(1, sphinx_args.verbose):
+                self.sphinxopts += ["-v"]
+
+    def __init__(self, builddir, venv=None, verbose=False, n_jobs=None,
+                 interactive=None):
+        """Initialize internal variables"""
+        self.venv = venv
+        self.verbose = None
+
+        #
+        # Normal variables passed from Kernel's makefile
+        #
+        self.kernelversion = os.environ.get("KERNELVERSION", "unknown")
+        self.kernelrelease = os.environ.get("KERNELRELEASE", "unknown")
+        self.pdflatex = os.environ.get("PDFLATEX", "xelatex")
+
+        #
+        # Kernel main Makefile defines a PYTHON3 variable whose default is
+        # "python3". When set to a different value, it allows running a
+        # diferent version than the default official python3 package.
+        # Several distros package python3xx-sphinx packages with newer
+        # versions of Python and sphinx-build.
+        #
+        # Honor such variable different than default
+        #
+        self.python = os.environ.get("PYTHON3")
+        if self.python == "python3":
+            self.python = None
+
+        if not interactive:
+            self.latexopts = os.environ.get("LATEXOPTS", "-interaction=batchmode -no-shell-escape")
+        else:
+            self.latexopts = os.environ.get("LATEXOPTS", "")
+
+        if not verbose:
+            try:
+                verbose = bool(int(os.environ.get("KBUILD_VERBOSE", 0)))
+            except ValueError:
+                # Handles an eventual case where verbosity is not a number
+                # like KBUILD_VERBOSE=""
+                verbose = False
+
+        if verbose is not None:
+            self.verbose = verbose
+
+        #
+        # Source tree directory. This needs to be at os.environ, as
+        # Sphinx extensions use it
+        #
+        self.srctree = os.environ.get("srctree")
+        if not self.srctree:
+            self.srctree = "."
+            os.environ["srctree"] = self.srctree
+
+        #
+        # Now that we can expand srctree, get other directories as well
+        #
+        self.sphinxbuild = os.environ.get("SPHINXBUILD", "sphinx-build")
+        self.kerneldoc = self.get_path(os.environ.get("KERNELDOC",
+                                                      "tools/docs/kernel-doc"))
+        self.builddir = self.get_path(builddir, use_cwd=True, abs_path=True)
+
+        #
+        # Get directory locations for LaTeX build toolchain
+        #
+        self.pdflatex_cmd = shutil.which(self.pdflatex)
+        self.latexmk_cmd = shutil.which("latexmk")
+
+        self.env = os.environ.copy()
+
+        self.get_sphinx_extra_opts(n_jobs)
+
+        #
+        # If venv command line argument is specified, run Sphinx from venv
+        #
+        if venv:
+            bin_dir = os.path.join(venv, "bin")
+            if not os.path.isfile(os.path.join(bin_dir, "activate")):
+                sys.exit(f"Venv {venv} not found.")
+
+            # "activate" virtual env
+            self.env["PATH"] = bin_dir + ":" + self.env["PATH"]
+            self.env["VIRTUAL_ENV"] = venv
+            if "PYTHONHOME" in self.env:
+                del self.env["PYTHONHOME"]
+            print(f"Setting venv to {venv}")
+
+    def run_sphinx(self, sphinx_build, build_args, *args, **pwargs):
+        """
+        Executes sphinx-build using current python3 command.
+
+        When calling via GNU make, POSIX jobserver is used to tell how
+        many jobs are still available from a job pool. claim all remaining
+        jobs, as we don't want sphinx-build to run in parallel with other
+        jobs.
+
+        Despite that, the user may actually force a different value than
+        the number of available jobs via command line.
+
+        The "with" logic here is used to ensure that the claimed jobs will
+        be freed once subprocess finishes
+        """
+
+        with JobserverExec() as jobserver:
+            if jobserver.claim:
+                #
+                # when GNU make is used, claim available jobs from jobserver
+                #
+                n_jobs = str(jobserver.claim)
+            else:
+                #
+                # Otherwise, let sphinx decide by default
+                #
+                n_jobs = "auto"
+
+            #
+            # If explicitly requested via command line, override default
+            #
+            if self.n_jobs:
+                n_jobs = str(self.n_jobs)
+
+            #
+            # We can't simply call python3 sphinx-build, as OpenSUSE
+            # Tumbleweed uses an ELF binary file (/usr/bin/alts) to switch
+            # between different versions of sphinx-build. So, only call it
+            # prepending "python3.xx" when PYTHON3 variable is not default.
+            #
+            if self.python:
+                cmd = [self.python]
+            else:
+                cmd = []
+
+            cmd += [sphinx_build]
+            cmd += [f"-j{n_jobs}"]
+            cmd += build_args
+            cmd += self.sphinxopts
+
+            if self.verbose:
+                print(" ".join(cmd))
+
+            return subprocess.call(cmd, *args, **pwargs)
+
+    def handle_html(self, css, output_dir):
+        """
+        Extra steps for HTML and epub output.
+
+        For such targets, we need to ensure that CSS will be properly
+        copied to the output _static directory
+        """
+
+        if css:
+            css = os.path.expanduser(css)
+            if not css.startswith("/"):
+                css = os.path.join(self.srctree, css)
+
+            static_dir = os.path.join(output_dir, "_static")
+            os.makedirs(static_dir, exist_ok=True)
+
+            try:
+                shutil.copy2(css, static_dir)
+            except (OSError, IOError) as e:
+                print(f"Warning: Failed to copy CSS: {e}", file=sys.stderr)
+
+    def build_pdf_file(self, latex_cmd, from_dir, path):
+        """Builds a single pdf file using latex_cmd"""
+        try:
+            subprocess.run(latex_cmd + [path],
+                            cwd=from_dir, check=True, env=self.env)
+
+            return True
+        except subprocess.CalledProcessError:
+            return False
+
+    def pdf_parallel_build(self, tex_suffix, latex_cmd, tex_files, n_jobs):
+        """Build PDF files in parallel if possible"""
+        builds = {}
+        build_failed = False
+        max_len = 0
+        has_tex = False
+
+        #
+        # LaTeX PDF error code is almost useless for us:
+        # any warning makes it non-zero. For kernel doc builds it always return
+        # non-zero even when build succeeds. So, let's do the best next thing:
+        # Ignore build errors. At the end, check if all PDF files were built,
+        # printing a summary with the built ones and returning 0 if all of
+        # them were actually built.
+        #
+        with futures.ThreadPoolExecutor(max_workers=n_jobs) as executor:
+            jobs = {}
+
+            for from_dir, pdf_dir, entry in tex_files:
+                name = entry.name
+
+                if not name.endswith(tex_suffix):
+                    continue
+
+                name = name[:-len(tex_suffix)]
+                has_tex = True
+
+                future = executor.submit(self.build_pdf_file, latex_cmd,
+                                         from_dir, entry.path)
+                jobs[future] = (from_dir, pdf_dir, name)
+
+            for future in futures.as_completed(jobs):
+                from_dir, pdf_dir, name = jobs[future]
+
+                pdf_name = name + ".pdf"
+                pdf_from = os.path.join(from_dir, pdf_name)
+                pdf_to = os.path.join(pdf_dir, pdf_name)
+                out_name = os.path.relpath(pdf_to, self.builddir)
+                max_len = max(max_len, len(out_name))
+
+                try:
+                    success = future.result()
+
+                    if success and os.path.exists(pdf_from):
+                        os.rename(pdf_from, pdf_to)
+
+                        #
+                        # if verbose, get the name of built PDF file
+                        #
+                        if self.verbose:
+                           builds[out_name] = "SUCCESS"
+                    else:
+                        builds[out_name] = "FAILED"
+                        build_failed = True
+                except futures.Error as e:
+                    builds[out_name] = f"FAILED ({repr(e)})"
+                    build_failed = True
+
+        #
+        # Handle case where no .tex files were found
+        #
+        if not has_tex:
+            out_name = "LaTeX files"
+            max_len = max(max_len, len(out_name))
+            builds[out_name] = "FAILED: no .tex files were generated"
+            build_failed = True
+
+        return builds, build_failed, max_len
+
+    def handle_pdf(self, output_dirs, deny_vf):
+        """
+        Extra steps for PDF output.
+
+        As PDF is handled via a LaTeX output, after building the .tex file,
+        a new build is needed to create the PDF output from the latex
+        directory.
+        """
+        builds = {}
+        max_len = 0
+        tex_suffix = ".tex"
+        tex_files = []
+
+        #
+        # Since early 2024, Fedora and openSUSE tumbleweed have started
+        # deploying variable-font format of "Noto CJK", causing LaTeX
+        # to break with CJK. Work around it, by denying the variable font
+        # usage during xelatex build by passing the location of a config
+        # file with a deny list.
+        #
+        # See tools/docs/lib/latex_fonts.py for more details.
+        #
+        if deny_vf:
+            deny_vf = os.path.expanduser(deny_vf)
+            if os.path.isdir(deny_vf):
+                self.env["XDG_CONFIG_HOME"] = deny_vf
+
+        for from_dir in output_dirs:
+            pdf_dir = os.path.join(from_dir, "../pdf")
+            os.makedirs(pdf_dir, exist_ok=True)
+
+            if self.latexmk_cmd:
+                latex_cmd = [self.latexmk_cmd, f"-{self.pdflatex}"]
+            else:
+                latex_cmd = [self.pdflatex]
+
+            latex_cmd.extend(shlex.split(self.latexopts))
+
+            # Get a list of tex files to process
+            with os.scandir(from_dir) as it:
+                for entry in it:
+                    if entry.name.endswith(tex_suffix):
+                        tex_files.append((from_dir, pdf_dir, entry))
+
+        #
+        # When using make, this won't be used, as the number of jobs comes
+        # from POSIX jobserver. So, this covers the case where build comes
+        # from command line. On such case, serialize by default, except if
+        # the user explicitly sets the number of jobs.
+        #
+        n_jobs = 1
+
+        # n_jobs is either an integer or "auto". Only use it if it is a number
+        if self.n_jobs:
+            try:
+                n_jobs = int(self.n_jobs)
+            except ValueError:
+                pass
+
+        #
+        # When using make, jobserver.claim is the number of jobs that were
+        # used with "-j" and that aren't used by other make targets
+        #
+        with JobserverExec() as jobserver:
+            n_jobs = 1
+
+            #
+            # Handle the case when a parameter is passed via command line,
+            # using it as default, if jobserver doesn't claim anything
+            #
+            if self.n_jobs:
+                try:
+                    n_jobs = int(self.n_jobs)
+                except ValueError:
+                    pass
+
+            if jobserver.claim:
+                n_jobs = jobserver.claim
+
+            builds, build_failed, max_len = self.pdf_parallel_build(tex_suffix,
+                                                                    latex_cmd,
+                                                                    tex_files,
+                                                                    n_jobs)
+
+        #
+        # In verbose mode, print a summary with the build results per file.
+        # Otherwise, print a single line with all failures, if any.
+        # On both cases, return code 1 indicates build failures,
+        #
+        if self.verbose:
+            msg = "Summary"
+            msg += "\n" + "=" * len(msg)
+            print()
+            print(msg)
+
+            for pdf_name, pdf_file in builds.items():
+                print(f"{pdf_name:<{max_len}}: {pdf_file}")
+
+            print()
+            if build_failed:
+                msg = LatexFontChecker().check()
+                if msg:
+                    print(msg)
+
+                sys.exit("Error: not all PDF files were created.")
+
+        elif build_failed:
+            n_failures = len(builds)
+            failures = ", ".join(builds.keys())
+
+            msg = LatexFontChecker().check()
+            if msg:
+                print(msg)
+
+            sys.exit(f"Error: Can't build {n_failures} PDF file(s): {failures}")
+
+    def handle_info(self, output_dirs):
+        """
+        Extra steps for Info output.
+
+        For texinfo generation, an additional make is needed from the
+        texinfo directory.
+        """
+
+        for output_dir in output_dirs:
+            try:
+                subprocess.run(["make", "info"], cwd=output_dir, check=True)
+            except subprocess.CalledProcessError as e:
+                sys.exit(f"Error generating info docs: {e}")
+
+    def handle_man(self, kerneldoc, docs_dir, src_dir, output_dir):
+        """
+        Create man pages from kernel-doc output
+        """
+
+        re_kernel_doc = re.compile(r"^\.\.\s+kernel-doc::\s*(\S+)")
+
+        if docs_dir == src_dir:
+            #
+            # Pick the entire set of kernel-doc markups from the entire tree
+            #
+            kdoc_files = set([self.srctree])
+        else:
+            kdoc_files = set()
+
+            for fname in glob(os.path.join(src_dir, "**"), recursive=True):
+                if os.path.isfile(fname) and fname.endswith(".rst"):
+                    with open(fname, "r", encoding="utf-8") as in_fp:
+                        data = in_fp.read()
+
+                    for line in data.split("\n"):
+                        match = re_kernel_doc.match(line)
+                        if match:
+                            if os.path.isfile(match.group(1)):
+                                kdoc_files.add(match.group(1))
+
+        if not kdoc_files:
+                sys.exit(f"Directory {src_dir} doesn't contain kernel-doc tags")
+
+        cmd = [ kerneldoc, "-m" ] + sorted(kdoc_files)
+        try:
+            if self.verbose:
+                print(" ".join(cmd))
+
+            result = subprocess.run(cmd, stdout=subprocess.PIPE, text= True)
+
+            if result.returncode:
+                print(f"Warning: kernel-doc returned {result.returncode} warnings")
+
+        except (OSError, ValueError, subprocess.SubprocessError) as e:
+            sys.exit(f"Failed to create man pages for {src_dir}: {repr(e)}")
+
+        fp = None
+        try:
+            for line in result.stdout.split("\n"):
+                if not line.startswith(".TH"):
+                    if fp:
+                        fp.write(line + '\n')
+                    continue
+
+                if fp:
+                    fp.close()
+
+                # Use shlex here, as it handles well parameters with commas
+                args = shlex.split(line)
+                fname = f"{args[1]}.{args[2]}"
+                fname = fname.replace("/", " ")
+                fname = f"{output_dir}/{fname}"
+
+                if self.verbose:
+                    print(f"Creating {fname}")
+                fp = open(fname, "w", encoding="utf-8")
+                fp.write(line + '\n')
+        finally:
+            if fp:
+                fp.close()
+
+    def cleandocs(self, builder):           # pylint: disable=W0613
+        """Remove documentation output directory"""
+        shutil.rmtree(self.builddir, ignore_errors=True)
+
+    def build(self, target, sphinxdirs=None,
+              theme=None, css=None, paper=None, deny_vf=None,
+              skip_sphinx=False):
+        """
+        Build documentation using Sphinx. This is the core function of this
+        module. It prepares all arguments required by sphinx-build.
+        """
+
+        builder = TARGETS[target]["builder"]
+        out_dir = TARGETS[target].get("out_dir", "")
+
+        #
+        # Cleandocs doesn't require sphinx-build
+        #
+        if target == "cleandocs":
+            self.cleandocs(builder)
+            return
+
+        if theme:
+            os.environ["DOCS_THEME"] = theme
+
+        #
+        # Other targets require sphinx-build, so check if it exists
+        #
+        if not skip_sphinx:
+            sphinxbuild = shutil.which(self.sphinxbuild, path=self.env["PATH"])
+            if not sphinxbuild and target != "mandocs":
+                sys.exit(f"Error: {self.sphinxbuild} not found in PATH.\n")
+
+        if target == "pdfdocs":
+            if not self.pdflatex_cmd and not self.latexmk_cmd:
+                sys.exit("Error: pdflatex or latexmk required for PDF generation")
+
+        docs_dir = os.path.abspath(os.path.join(self.srctree, "Documentation"))
+
+        #
+        # Fill in base arguments for Sphinx build
+        #
+        kerneldoc = self.kerneldoc
+        if kerneldoc.startswith(self.srctree):
+            kerneldoc = os.path.relpath(kerneldoc, self.srctree)
+
+        if not sphinxdirs:
+            sphinxdirs = os.environ.get("SPHINXDIRS", ".")
+
+        #
+        # sphinxdirs can be a list or a whitespace-separated string
+        #
+        sphinxdirs_list = []
+        for sphinxdir in sphinxdirs:
+            if isinstance(sphinxdir, list):
+                sphinxdirs_list += sphinxdir
+            else:
+                sphinxdirs_list += sphinxdir.split()
+
+        args = [ "-b", builder, "-c", docs_dir ]
+
+        if builder == "latex":
+            if not paper:
+                paper = PAPER[1]
+
+            args.extend(["-D", f"latex_elements.papersize={paper}paper"])
+
+        rustdoc = self.check_rust(sphinxdirs_list)
+        if rustdoc:
+            args.extend(["-t", "rustdoc"])
+
+        #
+        # The sphinx-build tool has a bug: internally, it tries to set
+        # locale with locale.setlocale(locale.LC_ALL, ''). This causes a
+        # crash if language is not set. Detect and fix it.
+        #
+        try:
+            locale.setlocale(locale.LC_ALL, '')
+        except locale.Error:
+            self.env["LC_ALL"] = "C"
+
+        #
+        # Step 1:  Build each directory in separate.
+        #
+        # This is not the best way of handling it, as cross-references between
+        # them will be broken, but this is what we've been doing since
+        # the beginning.
+        #
+        output_dirs = []
+        for sphinxdir in sphinxdirs_list:
+            src_dir = os.path.join(docs_dir, sphinxdir)
+            doctree_dir = os.path.join(self.builddir, ".doctrees")
+            output_dir = os.path.join(self.builddir, sphinxdir, out_dir)
+
+            #
+            # Make directory names canonical
+            #
+            src_dir = os.path.normpath(src_dir)
+            doctree_dir = os.path.normpath(doctree_dir)
+            output_dir = os.path.normpath(output_dir)
+
+            os.makedirs(doctree_dir, exist_ok=True)
+            os.makedirs(output_dir, exist_ok=True)
+
+            output_dirs.append(output_dir)
+
+            build_args = args + [
+                "-d", doctree_dir,
+                "-D", f"version={self.kernelversion}",
+                "-D", f"release={self.kernelrelease}",
+                "-D", f"kerneldoc_srctree={self.srctree}",
+                src_dir,
+                output_dir,
+            ]
+
+            if target == "mandocs":
+                self.handle_man(kerneldoc, docs_dir, src_dir, output_dir)
+            elif not skip_sphinx:
+                try:
+                    result = self.run_sphinx(sphinxbuild, build_args,
+                                             env=self.env)
+
+                    if result:
+                        sys.exit(f"Build failed: return code: {result}")
+
+                except (OSError, ValueError, subprocess.SubprocessError) as e:
+                    sys.exit(f"Build failed: {repr(e)}")
+
+            #
+            # Ensure that each html/epub output will have needed static files
+            #
+            if target in ["htmldocs", "epubdocs"]:
+                self.handle_html(css, output_dir)
+
+        #
+        # Step 2: Some targets (PDF and info) require an extra step once
+        #         sphinx-build finishes
+        #
+        if target == "pdfdocs":
+            self.handle_pdf(output_dirs, deny_vf)
+        elif target == "infodocs":
+            self.handle_info(output_dirs)
+
+        if rustdoc and target in ["htmldocs", "epubdocs"]:
+            print("Building rust docs")
+            if "MAKE" in self.env:
+                cmd = [self.env["MAKE"]]
+            else:
+                cmd = ["make", "LLVM=1"]
+
+            cmd += [ "rustdoc"]
+            if self.verbose:
+                print(" ".join(cmd))
+
+            try:
+                subprocess.run(cmd, check=True)
+            except subprocess.CalledProcessError as e:
+                print(f"Ignored errors when building rustdoc: {e}. Is RUST enabled?",
+                      file=sys.stderr)
+
+def jobs_type(value):
+    """
+    Handle valid values for -j. Accepts Sphinx "-jauto", plus a number
+    equal or bigger than one.
+    """
+    if value is None:
+        return None
+
+    if value.lower() == 'auto':
+        return value.lower()
+
+    try:
+        if int(value) >= 1:
+            return value
+
+        raise argparse.ArgumentTypeError(f"Minimum jobs is 1, got {value}")
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Must be 'auto' or positive integer, got {value}")  # pylint: disable=W0707
+
+EPILOG="""
+Besides the command line arguments, several environment variables affect its
+default behavior, meant to be used when called via Kernel Makefile:
+
+- KERNELVERSION:  Kernel major version
+- KERNELRELEASE:  Kernel release
+- KBUILD_VERBOSE: Contains the value of "make V=[0|1] variable.
+                  When V=0 (KBUILD_VERBOSE=0), sets verbose level to "-q".
+- SPHINXBUILD:    Documentation build tool (default: "sphinx-build").
+- SPHINXOPTS:     Extra options pased to SPHINXBUILD
+                  (default: "-j auto" and "-q" if KBUILD_VERBOSE=0).
+                  The "-v" flag can be used to increase verbosity.
+                  If V=0, the first "-v" will drop "-q".
+- PYTHON3:        Python command to run SPHINXBUILD
+- PDFLATEX:       LaTeX PDF engine. (default: "xelatex")
+- LATEXOPTS:      Optional set of command line arguments to the LaTeX engine
+- srctree:        Location of the Kernel root directory (default: ".").
+
+"""
+
+def main():
+    """
+    Main function. The only mandatory argument is the target. If not
+    specified, the other arguments will use default values if not
+    specified at os.environ.
+    """
+    parser = argparse.ArgumentParser(formatter_class=argparse.RawTextHelpFormatter,
+                                     description=__doc__,
+                                     epilog=EPILOG)
+
+    parser.add_argument("target", choices=list(TARGETS.keys()),
+                        help="Documentation target to build")
+    parser.add_argument("--sphinxdirs", nargs="+",
+                        help="Specific directories to build")
+    parser.add_argument("--builddir", default="output",
+                        help="Sphinx configuration file (default: %(default)s)")
+
+    parser.add_argument("--theme", help="Sphinx theme to use")
+
+    parser.add_argument("--css", help="Custom CSS file for HTML/EPUB")
+
+    parser.add_argument("--paper", choices=PAPER, default=PAPER[0],
+                        help="Paper size for LaTeX/PDF output")
+
+    parser.add_argument('--deny-vf',
+                        help="Configuration to deny variable fonts on pdf builds")
+
+    parser.add_argument("-v", "--verbose", action='store_true',
+                        help="place build in verbose mode")
+
+    parser.add_argument('-j', '--jobs', type=jobs_type,
+                        help="Sets number of jobs to use with sphinx-build(default: auto)")
+
+    parser.add_argument('-i', '--interactive', action='store_true',
+                        help="Change latex default to run in interactive mode")
+
+    parser.add_argument('-s', '--skip-sphinx-build', action='store_true',
+                        help="Skip sphinx-build step")
+
+    parser.add_argument("-V", "--venv", nargs='?', const=f'{VENV_DEFAULT}',
+                        default=None,
+                        help=f'If used, run Sphinx from a venv dir (default dir: {VENV_DEFAULT})')
+
+    args = parser.parse_args()
+
+    PythonVersion.check_python(MIN_PYTHON_VERSION, show_alternatives=True,
+                               bail_out=True)
+
+    builder = SphinxBuilder(builddir=args.builddir, venv=args.venv,
+                            verbose=args.verbose, n_jobs=args.jobs,
+                            interactive=args.interactive)
+
+    builder.build(args.target, sphinxdirs=args.sphinxdirs,
+                  theme=args.theme, css=args.css, paper=args.paper,
+                  deny_vf=args.deny_vf,
+                  skip_sphinx=args.skip_sphinx_build)
+
+if __name__ == "__main__":
+    main()
+===================================================
+
+sphinx-pre-install
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0-or-later
+# Copyright (c) 2017-2025 Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+#
+# pylint: disable=C0103,C0114,C0115,C0116,C0301,C0302
+# pylint: disable=R0902,R0904,R0911,R0912,R0914,R0915,R1705,R1710,E1121
+
+# Note: this script requires at least Python 3.6 to run.
+# Don't add changes not compatible with it, it is meant to report
+# incompatible python versions.
+
+"""
+Dependency checker for Sphinx documentation Kernel build.
+
+This module provides tools to check for all required dependencies needed to
+build documentation using Sphinx, including system packages, Python modules
+and LaTeX packages for PDF generation.
+
+It detect packages for a subset of Linux distributions used by Kernel
+maintainers, showing hints and missing dependencies.
+
+The main class SphinxDependencyChecker handles the dependency checking logic
+and provides recommendations for installing missing packages. It supports both
+system package installations and  Python virtual environments. By default,
+system pacage install is recommended.
+"""
+
+import argparse
+import locale
+import os
+import re
+import subprocess
+import sys
+from glob import glob
+import os.path
+
+src_dir = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, os.path.join(src_dir, '../lib/python'))
+from kdoc.python_version import PythonVersion
+
+RECOMMENDED_VERSION = PythonVersion("3.4.3").version
+MIN_PYTHON_VERSION = PythonVersion("3.7").version
+
+
+class DepManager:
+    """
+    Manage package dependencies. There are three types of dependencies:
+
+    - System: dependencies required for docs build;
+    - Python: python dependencies for a native distro Sphinx install;
+    - PDF: dependencies needed by PDF builds.
+
+    Each dependency can be mandatory or optional. Not installing an optional
+    dependency won't break the build, but will cause degradation at the
+    docs output.
+    """
+
+    # Internal types of dependencies. Don't use them outside DepManager class.
+    _SYS_TYPE = 0
+    _PHY_TYPE = 1
+    _PDF_TYPE = 2
+
+    # Dependencies visible outside the class.
+    # The keys are tuple with: (type, is_mandatory flag).
+    #
+    # Currently we're not using all optional dep types. Yet, we'll keep all
+    # possible combinations here. They're not many, and that makes easier
+    # if later needed and for the name() method below
+
+    SYSTEM_MANDATORY = (_SYS_TYPE, True)
+    PYTHON_MANDATORY = (_PHY_TYPE, True)
+    PDF_MANDATORY = (_PDF_TYPE, True)
+
+    SYSTEM_OPTIONAL = (_SYS_TYPE, False)
+    PYTHON_OPTIONAL = (_PHY_TYPE, False)
+    PDF_OPTIONAL = (_PDF_TYPE, True)
+
+    def __init__(self, pdf):
+        """
+        Initialize internal vars:
+
+        - missing: missing dependencies list, containing a distro-independent
+                   name for a missing dependency and its type.
+        - missing_pkg: ancillary dict containing missing dependencies in
+                       distro namespace, organized by type.
+        - need: total number of needed dependencies. Never cleaned.
+        - optional: total number of optional dependencies. Never cleaned.
+        - pdf: Is PDF support enabled?
+        """
+        self.missing = {}
+        self.missing_pkg = {}
+        self.need = 0
+        self.optional = 0
+        self.pdf = pdf
+
+    @staticmethod
+    def name(dtype):
+        """
+        Ancillary routine to output a warn/error message reporting
+        missing dependencies.
+        """
+        if dtype[0] == DepManager._SYS_TYPE:
+            msg = "build"
+        elif dtype[0] == DepManager._PHY_TYPE:
+            msg = "Python"
+        else:
+            msg = "PDF"
+
+        if dtype[1]:
+            return f"ERROR: {msg} mandatory deps missing"
+        else:
+            return f"Warning: {msg} optional deps missing"
+
+    @staticmethod
+    def is_optional(dtype):
+        """Ancillary routine to report if a dependency is optional"""
+        return not dtype[1]
+
+    @staticmethod
+    def is_pdf(dtype):
+        """Ancillary routine to report if a dependency is for PDF generation"""
+        if dtype[0] == DepManager._PDF_TYPE:
+            return True
+
+        return False
+
+    def add_package(self, package, dtype):
+        """
+        Add a package at the self.missing() dictionary.
+        Doesn't update missing_pkg.
+        """
+        is_optional = DepManager.is_optional(dtype)
+        self.missing[package] = dtype
+        if is_optional:
+            self.optional += 1
+        else:
+            self.need += 1
+
+    def del_package(self, package):
+        """
+        Remove a package at the self.missing() dictionary.
+        Doesn't update missing_pkg.
+        """
+        if package in self.missing:
+            del self.missing[package]
+
+    def clear_deps(self):
+        """
+        Clear dependencies without changing needed/optional.
+
+        This is an ackward way to have a separate section to recommend
+        a package after system main dependencies.
+
+        TODO: rework the logic to prevent needing it.
+        """
+
+        self.missing = {}
+        self.missing_pkg = {}
+
+    def check_missing(self, progs):
+        """
+        Update self.missing_pkg, using progs dict to convert from the
+        agnostic package name to distro-specific one.
+
+        Returns an string with the packages to be installed, sorted and
+        with eventual duplicates removed.
+        """
+
+        self.missing_pkg = {}
+
+        for prog, dtype in sorted(self.missing.items()):
+            # At least on some LTS distros like CentOS 7, texlive doesn't
+            # provide all packages we need. When such distros are
+            # detected, we have to disable PDF output.
+            #
+            # So, we need to ignore the packages that distros would
+            # need for LaTeX to work
+            if DepManager.is_pdf(dtype) and not self.pdf:
+                self.optional -= 1
+                continue
+
+            if not dtype in self.missing_pkg:
+                self.missing_pkg[dtype] = []
+
+            self.missing_pkg[dtype].append(progs.get(prog, prog))
+
+        install = []
+        for dtype, pkgs in self.missing_pkg.items():
+            install += pkgs
+
+        return " ".join(sorted(set(install)))
+
+    def warn_install(self):
+        """
+        Emit warnings/errors related to missing packages.
+        """
+
+        output_msg = ""
+
+        for dtype in sorted(self.missing_pkg.keys()):
+            progs = " ".join(sorted(set(self.missing_pkg[dtype])))
+
+            try:
+                name = DepManager.name(dtype)
+                output_msg += f'{name}:\t{progs}\n'
+            except KeyError:
+                raise KeyError(f"ERROR!!!: invalid dtype for {progs}: {dtype}")
+
+        if output_msg:
+            print(f"\n{output_msg}")
+
+class AncillaryMethods:
+    """
+    Ancillary methods that checks for missing dependencies for different
+    types of types, like binaries, python modules, rpm deps, etc.
+    """
+
+    @staticmethod
+    def which(prog):
+        """
+        Our own implementation of which(). We could instead use
+        shutil.which(), but this function is simple enough.
+        Probably faster to use this implementation than to import shutil.
+        """
+        for path in os.environ.get("PATH", "").split(":"):
+            full_path = os.path.join(path, prog)
+            if os.access(full_path, os.X_OK):
+                return full_path
+
+        return None
+
+    @staticmethod
+    def run(*args, **kwargs):
+        """
+        Excecute a command, hiding its output by default.
+        Preserve compatibility with older Python versions.
+        """
+
+        capture_output = kwargs.pop('capture_output', False)
+
+        if capture_output:
+            if 'stdout' not in kwargs:
+                kwargs['stdout'] = subprocess.PIPE
+            if 'stderr' not in kwargs:
+                kwargs['stderr'] = subprocess.PIPE
+        else:
+            if 'stdout' not in kwargs:
+                kwargs['stdout'] = subprocess.DEVNULL
+            if 'stderr' not in kwargs:
+                kwargs['stderr'] = subprocess.DEVNULL
+
+        # Don't break with older Python versions
+        if 'text' in kwargs and sys.version_info < (3, 7):
+            kwargs['universal_newlines'] = kwargs.pop('text')
+
+        return subprocess.run(*args, **kwargs)
+
+class MissingCheckers(AncillaryMethods):
+    """
+    Contains some ancillary checkers for different types of binaries and
+    package managers.
+    """
+
+    def __init__(self, args, texlive):
+        """
+        Initialize its internal variables
+        """
+        self.pdf = args.pdf
+        self.virtualenv = args.virtualenv
+        self.version_check = args.version_check
+        self.texlive = texlive
+
+        self.min_version = (0, 0, 0)
+        self.cur_version = (0, 0, 0)
+
+        self.deps = DepManager(self.pdf)
+
+        self.need_symlink = 0
+        self.need_sphinx = 0
+
+        self.verbose_warn_install = 1
+
+        self.virtenv_dir = ""
+        self.install = ""
+        self.python_cmd = ""
+
+        self.virtenv_prefix = ["sphinx_", "Sphinx_" ]
+
+    def check_missing_file(self, files, package, dtype):
+        """
+        Does the file exists? If not, add it to missing dependencies.
+        """
+        for f in files:
+            if os.path.exists(f):
+                return
+        self.deps.add_package(package, dtype)
+
+    def check_program(self, prog, dtype):
+        """
+        Does the program exists and it is at the PATH?
+        If not, add it to missing dependencies.
+        """
+        found = self.which(prog)
+        if found:
+            return found
+
+        self.deps.add_package(prog, dtype)
+
+        return None
+
+    def check_perl_module(self, prog, dtype):
+        """
+        Does perl have a dependency? Is it available?
+        If not, add it to missing dependencies.
+
+        Right now, we still need Perl for doc build, as it is required
+        by some tools called at docs or kernel build time, like:
+
+            tools/docs/documentation-file-ref-check
+
+        Also, checkpatch is on Perl.
+        """
+
+        # While testing with lxc download template, one of the
+        # distros (Oracle) didn't have perl - nor even an option to install
+        # before installing oraclelinux-release-el9 package.
+        #
+        # Check it before running an error. If perl is not there,
+        # add it as a mandatory package, as some parts of the doc builder
+        # needs it.
+        if not self.which("perl"):
+            self.deps.add_package("perl", DepManager.SYSTEM_MANDATORY)
+            self.deps.add_package(prog, dtype)
+            return
+
+        try:
+            self.run(["perl", f"-M{prog}", "-e", "1"], check=True)
+        except subprocess.CalledProcessError:
+            self.deps.add_package(prog, dtype)
+
+    def check_python_module(self, module, is_optional=False):
+        """
+        Does a python module exists outside venv? If not, add it to missing
+        dependencies.
+        """
+        if is_optional:
+            dtype = DepManager.PYTHON_OPTIONAL
+        else:
+            dtype = DepManager.PYTHON_MANDATORY
+
+        try:
+            self.run([self.python_cmd, "-c", f"import {module}"], check=True)
+        except subprocess.CalledProcessError:
+            self.deps.add_package(module, dtype)
+
+    def check_rpm_missing(self, pkgs, dtype):
+        """
+        Does a rpm package exists? If not, add it to missing dependencies.
+        """
+        for prog in pkgs:
+            try:
+                self.run(["rpm", "-q", prog], check=True)
+            except subprocess.CalledProcessError:
+                self.deps.add_package(prog, dtype)
+
+    def check_pacman_missing(self, pkgs, dtype):
+        """
+        Does a pacman package exists? If not, add it to missing dependencies.
+        """
+        for prog in pkgs:
+            try:
+                self.run(["pacman", "-Q", prog], check=True)
+            except subprocess.CalledProcessError:
+                self.deps.add_package(prog, dtype)
+
+    def check_missing_tex(self, is_optional=False):
+        """
+        Does a LaTeX package exists? If not, add it to missing dependencies.
+        """
+        if is_optional:
+            dtype = DepManager.PDF_OPTIONAL
+        else:
+            dtype = DepManager.PDF_MANDATORY
+
+        kpsewhich = self.which("kpsewhich")
+        for prog, package in self.texlive.items():
+
+            # If kpsewhich is not there, just add it to deps
+            if not kpsewhich:
+                self.deps.add_package(package, dtype)
+                continue
+
+            # Check if the package is needed
+            try:
+                result = self.run(
+                    [kpsewhich, prog], stdout=subprocess.PIPE, text=True, check=True
+                )
+
+                # Didn't find. Add it
+                if not result.stdout.strip():
+                    self.deps.add_package(package, dtype)
+
+            except subprocess.CalledProcessError:
+                # kpsewhich returned an error. Add it, just in case
+                self.deps.add_package(package, dtype)
+
+    def get_sphinx_fname(self):
+        """
+        Gets the binary filename for sphinx-build.
+        """
+        if "SPHINXBUILD" in os.environ:
+            return os.environ["SPHINXBUILD"]
+
+        fname = "sphinx-build"
+        if self.which(fname):
+            return fname
+
+        fname = "sphinx-build-3"
+        if self.which(fname):
+            self.need_symlink = 1
+            return fname
+
+        return ""
+
+    def get_sphinx_version(self, cmd):
+        """
+        Gets sphinx-build version.
+        """
+        env = os.environ.copy()
+
+        # The sphinx-build tool has a bug: internally, it tries to set
+        # locale with locale.setlocale(locale.LC_ALL, ''). This causes a
+        # crash if language is not set. Detect and fix it.
+        try:
+            locale.setlocale(locale.LC_ALL, '')
+        except Exception:
+            env["LC_ALL"] = "C"
+            env["LANG"] = "C"
+
+        try:
+            result = self.run([cmd, "--version"], env=env,
+                              stdout=subprocess.PIPE,
+                              stderr=subprocess.STDOUT,
+                              text=True, check=True)
+        except (subprocess.CalledProcessError, FileNotFoundError):
+            return None
+
+        for line in result.stdout.split("\n"):
+            match = re.match(r"^sphinx-build\s+([\d\.]+)(?:\+(?:/[\da-f]+)|b\d+)?\s*$", line)
+            if match:
+                return PythonVersion.parse_version(match.group(1))
+
+            match = re.match(r"^Sphinx.*\s+([\d\.]+)\s*$", line)
+            if match:
+                return PythonVersion.parse_version(match.group(1))
+
+    def check_sphinx(self, conf):
+        """
+        Checks Sphinx minimal requirements
+        """
+        try:
+            with open(conf, "r", encoding="utf-8") as f:
+                for line in f:
+                    match = re.match(r"^\s*needs_sphinx\s*=\s*[\'\"]([\d\.]+)[\'\"]", line)
+                    if match:
+                        self.min_version = PythonVersion.parse_version(match.group(1))
+                        break
+        except IOError:
+            sys.exit(f"Can't open {conf}")
+
+        if not self.min_version:
+            sys.exit(f"Can't get needs_sphinx version from {conf}")
+
+        self.virtenv_dir = self.virtenv_prefix[0] + "latest"
+
+        sphinx = self.get_sphinx_fname()
+        if not sphinx:
+            self.need_sphinx = 1
+            return
+
+        self.cur_version = self.get_sphinx_version(sphinx)
+        if not self.cur_version:
+            sys.exit(f"{sphinx} didn't return its version")
+
+        if self.cur_version < self.min_version:
+            curver = PythonVersion.ver_str(self.cur_version)
+            minver = PythonVersion.ver_str(self.min_version)
+
+            print(f"ERROR: Sphinx version is {curver}. It should be >= {minver}")
+            self.need_sphinx = 1
+            return
+
+        # On version check mode, just assume Sphinx has all mandatory deps
+        if self.version_check and self.cur_version >= RECOMMENDED_VERSION:
+            sys.exit(0)
+
+    def catcheck(self, filename):
+        """
+        Reads a file if it exists, returning as string.
+        If not found, returns an empty string.
+        """
+        if os.path.exists(filename):
+            with open(filename, "r", encoding="utf-8") as f:
+                return f.read().strip()
+        return ""
+
+    def get_system_release(self):
+        """
+        Determine the system type. There's no unique way that would work
+        with all distros with a minimal package install. So, several
+        methods are used here.
+
+        By default, it will use lsb_release function. If not available, it will
+        fail back to reading the known different places where the distro name
+        is stored.
+
+        Several modern distros now have /etc/os-release, which usually have
+        a decent coverage.
+        """
+
+        system_release = ""
+
+        if self.which("lsb_release"):
+            result = self.run(["lsb_release", "-d"], capture_output=True, text=True)
+            system_release = result.stdout.replace("Description:", "").strip()
+
+        release_files = [
+            "/etc/system-release",
+            "/etc/redhat-release",
+            "/etc/lsb-release",
+            "/etc/gentoo-release",
+        ]
+
+        if not system_release:
+            for f in release_files:
+                system_release = self.catcheck(f)
+                if system_release:
+                    break
+
+        # This seems more common than LSB these days
+        if not system_release:
+            os_var = {}
+            try:
+                with open("/etc/os-release", "r", encoding="utf-8") as f:
+                    for line in f:
+                        match = re.match(r"^([\w\d\_]+)=\"?([^\"]*)\"?\n", line)
+                        if match:
+                            os_var[match.group(1)] = match.group(2)
+
+                system_release = os_var.get("NAME", "")
+                if "VERSION_ID" in os_var:
+                    system_release += " " + os_var["VERSION_ID"]
+                elif "VERSION" in os_var:
+                    system_release += " " + os_var["VERSION"]
+            except IOError:
+                pass
+
+        if not system_release:
+            system_release = self.catcheck("/etc/issue")
+
+        system_release = system_release.strip()
+
+        return system_release
+
+class SphinxDependencyChecker(MissingCheckers):
+    """
+    Main class for checking Sphinx documentation build dependencies.
+
+    - Check for missing system packages;
+    - Check for missing Python modules;
+    - Check for missing LaTeX packages needed by PDF generation;
+    - Propose Sphinx install via Python Virtual environment;
+    - Propose Sphinx install via distro-specific package install.
+    """
+    def __init__(self, args):
+        """Initialize checker variables"""
+
+        # List of required texlive packages on Fedora and OpenSuse
+        texlive = {
+            "amsfonts.sty":       "texlive-amsfonts",
+            "amsmath.sty":        "texlive-amsmath",
+            "amssymb.sty":        "texlive-amsfonts",
+            "amsthm.sty":         "texlive-amscls",
+            "anyfontsize.sty":    "texlive-anyfontsize",
+            "atbegshi.sty":       "texlive-oberdiek",
+            "bm.sty":             "texlive-tools",
+            "capt-of.sty":        "texlive-capt-of",
+            "cmap.sty":           "texlive-cmap",
+            "ctexhook.sty":       "texlive-ctex",
+            "ecrm1000.tfm":       "texlive-ec",
+            "eqparbox.sty":       "texlive-eqparbox",
+            "eu1enc.def":         "texlive-euenc",
+            "fancybox.sty":       "texlive-fancybox",
+            "fancyvrb.sty":       "texlive-fancyvrb",
+            "float.sty":          "texlive-float",
+            "fncychap.sty":       "texlive-fncychap",
+            "footnote.sty":       "texlive-mdwtools",
+            "framed.sty":         "texlive-framed",
+            "luatex85.sty":       "texlive-luatex85",
+            "multirow.sty":       "texlive-multirow",
+            "needspace.sty":      "texlive-needspace",
+            "palatino.sty":       "texlive-psnfss",
+            "parskip.sty":        "texlive-parskip",
+            "polyglossia.sty":    "texlive-polyglossia",
+            "tabulary.sty":       "texlive-tabulary",
+            "threeparttable.sty": "texlive-threeparttable",
+            "titlesec.sty":       "texlive-titlesec",
+            "ucs.sty":            "texlive-ucs",
+            "upquote.sty":        "texlive-upquote",
+            "wrapfig.sty":        "texlive-wrapfig",
+        }
+
+        super().__init__(args, texlive)
+
+        self.need_pip = False
+        self.rec_sphinx_upgrade = 0
+
+        self.system_release = self.get_system_release()
+        self.activate_cmd = ""
+
+        # Some distros may not have a Sphinx shipped package compatible with
+        # our minimal requirements
+        self.package_supported = True
+
+        # Recommend a new python version
+        self.recommend_python = None
+
+        # Certain hints are meant to be shown only once
+        self.distro_msg = None
+
+        self.latest_avail_ver = (0, 0, 0)
+        self.venv_ver = (0, 0, 0)
+
+        prefix = os.environ.get("srctree", ".") + "/"
+
+        self.conf = prefix + "Documentation/conf.py"
+        self.requirement_file = prefix + "Documentation/sphinx/requirements.txt"
+
+    def get_install_progs(self, progs, cmd, extra=None):
+        """
+        Check for missing dependencies using the provided program mapping.
+
+        The actual distro-specific programs are mapped via progs argument.
+        """
+        install = self.deps.check_missing(progs)
+
+        if self.verbose_warn_install:
+            self.deps.warn_install()
+
+        if not install:
+            return
+
+        if cmd:
+            if self.verbose_warn_install:
+                msg = "You should run:"
+            else:
+                msg = ""
+
+            if extra:
+                msg += "\n\t" + extra.replace("\n", "\n\t")
+
+            return(msg + "\n\tsudo " + cmd + " " + install)
+
+        return None
+
+    #
+    # Distro-specific hints methods
+    #
+
+    def give_debian_hints(self):
+        """
+        Provide package installation hints for Debian-based distros.
+        """
+        progs = {
+            "Pod::Usage":    "perl-modules",
+            "convert":       "imagemagick",
+            "dot":           "graphviz",
+            "ensurepip":     "python3-venv",
+            "python-sphinx": "python3-sphinx",
+            "rsvg-convert":  "librsvg2-bin",
+            "virtualenv":    "virtualenv",
+            "xelatex":       "texlive-xetex",
+            "yaml":          "python3-yaml",
+        }
+
+        if self.pdf:
+            pdf_pkgs = {
+                "fonts-dejavu": [
+                    "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                ],
+                "fonts-noto-cjk": [
+                    "/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
+                    "/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc",
+                ],
+                "tex-gyre": [
+                    "/usr/share/texmf/tex/latex/tex-gyre/tgtermes.sty"
+                ],
+                "texlive-fonts-recommended": [
+                    "/usr/share/texlive/texmf-dist/fonts/tfm/adobe/zapfding/pzdr.tfm",
+                ],
+                "texlive-lang-chinese": [
+                    "/usr/share/texlive/texmf-dist/tex/latex/ctex/ctexhook.sty",
+                ],
+            }
+
+            for package, files in pdf_pkgs.items():
+                self.check_missing_file(files, package, DepManager.PDF_MANDATORY)
+
+            self.check_program("dvipng", DepManager.PDF_MANDATORY)
+
+        if not self.distro_msg:
+            self.distro_msg = \
+                "Note: ImageMagick is broken on some distros, affecting PDF output. For more details:\n" \
+                "\thttps://askubuntu.com/questions/1158894/imagemagick-still-broken-using-with-usr-bin-convert"
+
+        return self.get_install_progs(progs, "apt-get install")
+
+    def give_redhat_hints(self):
+        """
+        Provide package installation hints for RedHat-based distros
+        (Fedora, RHEL and RHEL-based variants).
+        """
+        progs = {
+            "Pod::Usage":       "perl-Pod-Usage",
+            "convert":          "ImageMagick",
+            "dot":              "graphviz",
+            "python-sphinx":    "python3-sphinx",
+            "rsvg-convert":     "librsvg2-tools",
+            "virtualenv":       "python3-virtualenv",
+            "xelatex":          "texlive-xetex-bin",
+            "yaml":             "python3-pyyaml",
+        }
+
+        fedora_tex_pkgs = [
+            "dejavu-sans-fonts",
+            "dejavu-sans-mono-fonts",
+            "dejavu-serif-fonts",
+            "texlive-collection-fontsrecommended",
+            "texlive-collection-latex",
+            "texlive-xecjk",
+        ]
+
+        fedora = False
+        rel = None
+
+        match = re.search(r"(release|Linux)\s+(\d+)", self.system_release)
+        if match:
+            rel = int(match.group(2))
+
+        if not rel:
+            print("Couldn't identify release number")
+            noto_sans_redhat = None
+            self.pdf = False
+        elif re.search("Fedora", self.system_release):
+            # Fedora 38 and upper use this CJK font
+
+            noto_sans_redhat = "google-noto-sans-cjk-fonts"
+            fedora = True
+        else:
+            # Almalinux, CentOS, RHEL, ...
+
+            # at least up to version 9 (and Fedora < 38), that's the CJK font
+            noto_sans_redhat = "google-noto-sans-cjk-ttc-fonts"
+
+            progs["virtualenv"] = "python-virtualenv"
+
+            if not rel or rel < 8:
+                print("ERROR: Distro not supported. Too old?")
+                return
+
+            # RHEL 8 uses Python 3.6, which is not compatible with
+            # the build system anymore. Suggest Python 3.11
+            if rel == 8:
+                self.check_program("python3.9", DepManager.SYSTEM_MANDATORY)
+                progs["python3.9"] = "python39"
+                progs["yaml"] = "python39-pyyaml"
+
+                self.recommend_python = True
+
+                # There's no python39-sphinx package. Only pip is supported
+                self.package_supported = False
+
+            if not self.distro_msg:
+                self.distro_msg = \
+                    "Note: RHEL-based distros typically require extra repositories.\n" \
+                    "For most, enabling epel and crb are enough:\n" \
+                    "\tsudo dnf install -y epel-release\n" \
+                    "\tsudo dnf config-manager --set-enabled crb\n" \
+                    "Yet, some may have other required repositories. Those commands could be useful:\n" \
+                    "\tsudo dnf repolist all\n" \
+                    "\tsudo dnf repoquery --available --info <pkgs>\n" \
+                    "\tsudo dnf config-manager --set-enabled '*' # enable all - probably not what you want"
+
+        if self.pdf:
+            pdf_pkgs = [
+                "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/google-noto-sans-cjk-fonts/NotoSansCJK-Regular.ttc",
+            ]
+
+            self.check_missing_file(pdf_pkgs, noto_sans_redhat, DepManager.PDF_MANDATORY)
+
+            self.check_rpm_missing(fedora_tex_pkgs, DepManager.PDF_MANDATORY)
+
+            self.check_missing_tex(DepManager.PDF_MANDATORY)
+
+            # There's no texlive-ctex on RHEL 8 repositories. This will
+            # likely affect CJK pdf build only.
+            if not fedora and rel == 8:
+                self.deps.del_package("texlive-ctex")
+
+        return self.get_install_progs(progs, "dnf install")
+
+    def give_opensuse_hints(self):
+        """
+        Provide package installation hints for openSUSE-based distros
+        (Leap and Tumbleweed).
+        """
+        progs = {
+            "Pod::Usage":    "perl-Pod-Usage",
+            "convert":       "ImageMagick",
+            "dot":           "graphviz",
+            "python-sphinx": "python3-sphinx",
+            "virtualenv":    "python3-virtualenv",
+            "xelatex":       "texlive-xetex-bin texlive-dejavu",
+            "yaml":          "python3-pyyaml",
+        }
+
+        suse_tex_pkgs = [
+            "texlive-babel-english",
+            "texlive-caption",
+            "texlive-colortbl",
+            "texlive-courier",
+            "texlive-dvips",
+            "texlive-helvetic",
+            "texlive-makeindex",
+            "texlive-metafont",
+            "texlive-metapost",
+            "texlive-palatino",
+            "texlive-preview",
+            "texlive-times",
+            "texlive-zapfchan",
+            "texlive-zapfding",
+        ]
+
+        progs["latexmk"] = "texlive-latexmk-bin"
+
+        match = re.search(r"(Leap)\s+(\d+).(\d)", self.system_release)
+        if match:
+            rel = int(match.group(2))
+
+            # Leap 15.x uses Python 3.6, which is not compatible with
+            # the build system anymore. Suggest Python 3.11
+            if rel == 15:
+                if not self.which(self.python_cmd):
+                    self.check_program("python3.11", DepManager.SYSTEM_MANDATORY)
+                    progs["python3.11"] = "python311"
+                    self.recommend_python = True
+
+                progs.update({
+                    "python-sphinx": "python311-Sphinx python311-Sphinx-latex",
+                    "virtualenv":    "python311-virtualenv",
+                    "yaml":          "python311-PyYAML",
+                })
+        else:
+            # Tumbleweed defaults to Python 3.11
+
+            progs.update({
+                "python-sphinx": "python313-Sphinx python313-Sphinx-latex",
+                "virtualenv":    "python313-virtualenv",
+                "yaml":          "python313-PyYAML",
+            })
+
+        # FIXME: add support for installing CJK fonts
+        #
+        # I tried hard, but was unable to find a way to install
+        # "Noto Sans CJK SC" on openSUSE
+
+        if self.pdf:
+            self.check_rpm_missing(suse_tex_pkgs, DepManager.PDF_MANDATORY)
+        if self.pdf:
+            self.check_missing_tex()
+
+        return self.get_install_progs(progs, "zypper install --no-recommends")
+
+    def give_mageia_hints(self):
+        """
+        Provide package installation hints for Mageia and OpenMandriva.
+        """
+        progs = {
+            "Pod::Usage":    "perl-Pod-Usage",
+            "convert":       "ImageMagick",
+            "dot":           "graphviz",
+            "python-sphinx": "python3-sphinx",
+            "rsvg-convert":  "librsvg2",
+            "virtualenv":    "python3-virtualenv",
+            "xelatex":       "texlive",
+            "yaml":          "python3-yaml",
+        }
+
+        tex_pkgs = [
+            "texlive-fontsextra",
+            "texlive-fonts-asian",
+            "fonts-ttf-dejavu",
+        ]
+
+        if re.search(r"OpenMandriva", self.system_release):
+            packager_cmd = "dnf install"
+            noto_sans = "noto-sans-cjk-fonts"
+            tex_pkgs = [
+                "texlive-collection-basic",
+                "texlive-collection-langcjk",
+                "texlive-collection-fontsextra",
+                "texlive-collection-fontsrecommended"
+            ]
+
+            # Tested on OpenMandriva Lx 4.3
+            progs["convert"] = "imagemagick"
+            progs["yaml"] = "python-pyyaml"
+            progs["python-virtualenv"] = "python-virtualenv"
+            progs["python-sphinx"] = "python-sphinx"
+            progs["xelatex"] = "texlive"
+
+            self.check_program("python-virtualenv", DepManager.PYTHON_MANDATORY)
+
+            # On my tests with openMandriva LX 4.0 docker image, upgraded
+            # to 4.3, python-virtualenv package is broken: it is missing
+            # ensurepip. Without it, the alternative would be to run:
+            # python3 -m venv --without-pip ~/sphinx_latest, but running
+            # pip there won't install sphinx at venv.
+            #
+            # Add a note about that.
+
+            if not self.distro_msg:
+                self.distro_msg = \
+                    "Notes:\n"\
+                    "1. for venv, ensurepip could be broken, preventing its install method.\n" \
+                    "2. at least on OpenMandriva LX 4.3, texlive packages seem broken"
+
+        else:
+            packager_cmd = "urpmi"
+            noto_sans = "google-noto-sans-cjk-ttc-fonts"
+
+        progs["latexmk"] = "texlive-collection-basic"
+
+        if self.pdf:
+            pdf_pkgs = [
+                "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Regular.ttc",
+                "/usr/share/fonts/TTF/NotoSans-Regular.ttf",
+            ]
+
+            self.check_missing_file(pdf_pkgs, noto_sans, DepManager.PDF_MANDATORY)
+            self.check_rpm_missing(tex_pkgs, DepManager.PDF_MANDATORY)
+
+        return self.get_install_progs(progs, packager_cmd)
+
+    def give_arch_linux_hints(self):
+        """
+        Provide package installation hints for ArchLinux.
+        """
+        progs = {
+            "convert":      "imagemagick",
+            "dot":          "graphviz",
+            "latexmk":      "texlive-core",
+            "rsvg-convert": "extra/librsvg",
+            "virtualenv":   "python-virtualenv",
+            "xelatex":      "texlive-xetex",
+            "yaml":         "python-yaml",
+        }
+
+        archlinux_tex_pkgs = [
+            "texlive-basic",
+            "texlive-binextra",
+            "texlive-core",
+            "texlive-fontsrecommended",
+            "texlive-langchinese",
+            "texlive-langcjk",
+            "texlive-latexextra",
+            "ttf-dejavu",
+        ]
+
+        if self.pdf:
+            self.check_pacman_missing(archlinux_tex_pkgs,
+                                      DepManager.PDF_MANDATORY)
+
+            self.check_missing_file(["/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc"],
+                                    "noto-fonts-cjk",
+                                    DepManager.PDF_MANDATORY)
+
+
+        return self.get_install_progs(progs, "pacman -S")
+
+    def give_gentoo_hints(self):
+        """
+        Provide package installation hints for Gentoo.
+        """
+        texlive_deps = [
+            "dev-texlive/texlive-fontsrecommended",
+            "dev-texlive/texlive-latexextra",
+            "dev-texlive/texlive-xetex",
+            "media-fonts/dejavu",
+        ]
+
+        progs = {
+            "convert":       "media-gfx/imagemagick",
+            "dot":           "media-gfx/graphviz",
+            "rsvg-convert":  "gnome-base/librsvg",
+            "virtualenv":    "dev-python/virtualenv",
+            "xelatex":       " ".join(texlive_deps),
+            "yaml":          "dev-python/pyyaml",
+            "python-sphinx": "dev-python/sphinx",
+        }
+
+        if self.pdf:
+            pdf_pkgs = {
+                "media-fonts/dejavu": [
+                    "/usr/share/fonts/dejavu/DejaVuSans.ttf",
+                ],
+                "media-fonts/noto-cjk": [
+                    "/usr/share/fonts/noto-cjk/NotoSansCJKsc-Regular.otf",
+                    "/usr/share/fonts/noto-cjk/NotoSerifCJK-Regular.ttc",
+                ],
+            }
+            for package, files in pdf_pkgs.items():
+                self.check_missing_file(files, package, DepManager.PDF_MANDATORY)
+
+        # Handling dependencies is a nightmare, as Gentoo refuses to emerge
+        # some packages if there's no package.use file describing them.
+        # To make it worse, compilation flags shall also be present there
+        # for some packages. If USE is not perfect, error/warning messages
+        #   like those are shown:
+        #
+        #   !!! The following binary packages have been ignored due to non matching USE:
+        #
+        #    =media-gfx/graphviz-12.2.1-r1 X pdf -python_single_target_python3_13 qt6 svg
+        #    =media-gfx/graphviz-12.2.1-r1 X pdf python_single_target_python3_12 -python_single_target_python3_13 qt6 svg
+        #    =media-gfx/graphviz-12.2.1-r1 X pdf qt6 svg
+        #    =media-gfx/graphviz-12.2.1-r1 X pdf -python_single_target_python3_10 qt6 svg
+        #    =media-gfx/graphviz-12.2.1-r1 X pdf -python_single_target_python3_10 python_single_target_python3_12 -python_single_target_python3_13 qt6 svg
+        #    =media-fonts/noto-cjk-20190416 X
+        #    =app-text/texlive-core-2024-r1 X cjk -xetex
+        #    =app-text/texlive-core-2024-r1 X -xetex
+        #    =app-text/texlive-core-2024-r1 -xetex
+        #    =dev-libs/zziplib-0.13.79-r1 sdl
+        #
+        # And will ignore such packages, installing the remaining ones. That
+        # affects mostly the image extension and PDF generation.
+
+        # Package dependencies and the minimal needed args:
+        portages = {
+            "graphviz": "media-gfx/graphviz",
+            "imagemagick": "media-gfx/imagemagick",
+            "media-libs": "media-libs/harfbuzz icu",
+            "media-fonts": "media-fonts/noto-cjk",
+            "texlive": "app-text/texlive-core xetex",
+            "zziblib": "dev-libs/zziplib sdl",
+        }
+
+        extra_cmds = ""
+        if not self.distro_msg:
+            self.distro_msg = "Note: Gentoo requires package.use to be adjusted before emerging packages"
+
+            use_base = "/etc/portage/package.use"
+            files = glob(f"{use_base}/*")
+
+            for fname, portage in portages.items():
+                install = False
+
+                while install is False:
+                    if not files:
+                        # No files under package.usage. Install all
+                        install = True
+                        break
+
+                    args = portage.split(" ")
+
+                    name = args.pop(0)
+
+                    cmd = ["grep", "-l", "-E", rf"^{name}\b" ] + files
+                    result = self.run(cmd, stdout=subprocess.PIPE, text=True)
+                    if result.returncode or not result.stdout.strip():
+                        # File containing portage name not found
+                        install = True
+                        break
+
+                    # Ensure that needed USE flags are present
+                    if args:
+                        match_fname = result.stdout.strip()
+                        with open(match_fname, 'r', encoding='utf8',
+                                errors='backslashreplace') as fp:
+                            for line in fp:
+                                for arg in args:
+                                    if arg.startswith("-"):
+                                        continue
+
+                                if not re.search(rf"\s*{arg}\b", line):
+                                    # Needed file argument not found
+                                    install = True
+                                    break
+
+                    # Everything looks ok, don't install
+                    break
+
+                # emit a code to setup missing USE
+                if install:
+                    extra_cmds += (f"sudo su -c 'echo \"{portage}\" > {use_base}/{fname}'\n")
+
+        # Now, we can use emerge and let it respect USE
+        return self.get_install_progs(progs,
+                                      "emerge --ask --changed-use --binpkg-respect-use=y",
+                                      extra_cmds)
+
+    def get_install(self):
+        """
+        OS-specific hints logic. Seeks for a hinter. If found, use it to
+        provide package-manager specific install commands.
+
+        Otherwise, outputs install instructions for the meta-packages.
+
+        Returns a string with the command to be executed to install the
+        the needed packages, if distro found. Otherwise, return just a
+        list of packages that require installation.
+        """
+        os_hints = {
+            re.compile("Red Hat Enterprise Linux"):   self.give_redhat_hints,
+            re.compile("Fedora"):                     self.give_redhat_hints,
+            re.compile("AlmaLinux"):                  self.give_redhat_hints,
+            re.compile("Amazon Linux"):               self.give_redhat_hints,
+            re.compile("CentOS"):                     self.give_redhat_hints,
+            re.compile("openEuler"):                  self.give_redhat_hints,
+            re.compile("Oracle Linux Server"):        self.give_redhat_hints,
+            re.compile("Rocky Linux"):                self.give_redhat_hints,
+            re.compile("Springdale Open Enterprise"): self.give_redhat_hints,
+
+            re.compile("Ubuntu"):                     self.give_debian_hints,
+            re.compile("Debian"):                     self.give_debian_hints,
+            re.compile("Devuan"):                     self.give_debian_hints,
+            re.compile("Kali"):                       self.give_debian_hints,
+            re.compile("Mint"):                       self.give_debian_hints,
+
+            re.compile("openSUSE"):                   self.give_opensuse_hints,
+
+            re.compile("Mageia"):                     self.give_mageia_hints,
+            re.compile("OpenMandriva"):               self.give_mageia_hints,
+
+            re.compile("Arch Linux"):                 self.give_arch_linux_hints,
+            re.compile("Gentoo"):                     self.give_gentoo_hints,
+        }
+
+        # If the OS is detected, use per-OS hint logic
+        for regex, os_hint in os_hints.items():
+            if regex.search(self.system_release):
+                return os_hint()
+
+        #
+        # Fall-back to generic hint code for other distros
+        # That's far from ideal, specially for LaTeX dependencies.
+        #
+        progs = {"sphinx-build": "sphinx"}
+        if self.pdf:
+            self.check_missing_tex()
+
+        self.distro_msg = \
+            f"I don't know distro {self.system_release}.\n" \
+            "So, I can't provide you a hint with the install procedure.\n" \
+            "There are likely missing dependencies."
+
+        return self.get_install_progs(progs, None)
+
+    #
+    # Common dependencies
+    #
+    def deactivate_help(self):
+        """
+        Print a helper message to disable a virtual environment.
+        """
+
+        print("\n    If you want to exit the virtualenv, you can use:")
+        print("\tdeactivate")
+
+    def get_virtenv(self):
+        """
+        Give a hint about how to activate an already-existing virtual
+        environment containing sphinx-build.
+
+        Returns a tuble with (activate_cmd_path, sphinx_version) with
+        the newest available virtual env.
+        """
+
+        cwd = os.getcwd()
+
+        activates = []
+
+        # Add all sphinx prefixes with possible version numbers
+        for p in self.virtenv_prefix:
+            activates += glob(f"{cwd}/{p}[0-9]*/bin/activate")
+
+        activates.sort(reverse=True, key=str.lower)
+
+        # Place sphinx_latest first, if it exists
+        for p in self.virtenv_prefix:
+            activates = glob(f"{cwd}/{p}*latest/bin/activate") + activates
+
+        ver = (0, 0, 0)
+        for f in activates:
+            # Discard too old Sphinx virtual environments
+            match = re.search(r"(\d+)\.(\d+)\.(\d+)", f)
+            if match:
+                ver = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+
+                if ver < self.min_version:
+                    continue
+
+            sphinx_cmd = f.replace("activate", "sphinx-build")
+            if not os.path.isfile(sphinx_cmd):
+                continue
+
+            ver = self.get_sphinx_version(sphinx_cmd)
+
+            if not ver:
+                venv_dir = f.replace("/bin/activate", "")
+                print(f"Warning: virtual environment {venv_dir} is not working.\n" \
+                      "Python version upgrade? Remove it with:\n\n" \
+                      "\trm -rf {venv_dir}\n\n")
+            else:
+                if self.need_sphinx and ver >= self.min_version:
+                    return (f, ver)
+                elif PythonVersion.parse_version(ver) > self.cur_version:
+                    return (f, ver)
+
+        return ("", ver)
+
+    def recommend_sphinx_upgrade(self):
+        """
+        Check if Sphinx needs to be upgraded.
+
+        Returns a tuple with the higest available Sphinx version if found.
+        Otherwise, returns None to indicate either that no upgrade is needed
+        or no venv was found.
+        """
+
+        # Avoid running sphinx-builds from venv if cur_version is good
+        if self.cur_version and self.cur_version >= RECOMMENDED_VERSION:
+            self.latest_avail_ver = self.cur_version
+            return None
+
+        # Get the highest version from sphinx_*/bin/sphinx-build and the
+        # corresponding command to activate the venv/virtenv
+        self.activate_cmd, self.venv_ver = self.get_virtenv()
+
+        # Store the highest version from Sphinx existing virtualenvs
+        if self.activate_cmd and self.venv_ver > self.cur_version:
+            self.latest_avail_ver = self.venv_ver
+        else:
+            if self.cur_version:
+                self.latest_avail_ver = self.cur_version
+            else:
+                self.latest_avail_ver = (0, 0, 0)
+
+        # As we don't know package version of Sphinx, and there's no
+        # virtual environments, don't check if upgrades are needed
+        if not self.virtualenv:
+            if not self.latest_avail_ver:
+                return None
+
+            return self.latest_avail_ver
+
+        # Either there are already a virtual env or a new one should be created
+        self.need_pip = True
+
+        if not self.latest_avail_ver:
+            return None
+
+        # Return if the reason is due to an upgrade or not
+        if self.latest_avail_ver != (0, 0, 0):
+            if self.latest_avail_ver < RECOMMENDED_VERSION:
+                self.rec_sphinx_upgrade = 1
+
+        return self.latest_avail_ver
+
+    def recommend_package(self):
+        """
+        Recommend installing Sphinx as a distro-specific package.
+        """
+
+        print("\n2) As a package with:")
+
+        old_need = self.deps.need
+        old_optional = self.deps.optional
+
+        self.pdf = False
+        self.deps.optional = 0
+        old_verbose = self.verbose_warn_install
+        self.verbose_warn_install = 0
+
+        self.deps.clear_deps()
+
+        self.deps.add_package("python-sphinx", DepManager.PYTHON_MANDATORY)
+
+        cmd = self.get_install()
+        if cmd:
+            print(cmd)
+
+        self.deps.need = old_need
+        self.deps.optional = old_optional
+        self.verbose_warn_install = old_verbose
+
+    def recommend_sphinx_version(self, virtualenv_cmd):
+        """
+        Provide recommendations for installing or upgrading Sphinx based
+        on current version.
+
+        The logic here is complex, as it have to deal with different versions:
+
+        - minimal supported version;
+        - minimal PDF version;
+        - recommended version.
+
+        It also needs to work fine with both distro's package and
+        venv/virtualenv
+        """
+
+        if self.recommend_python:
+            cur_ver = sys.version_info[:3]
+            if cur_ver < MIN_PYTHON_VERSION:
+                print(f"\nPython version {cur_ver} is incompatible with doc build.\n" \
+                    "Please upgrade it and re-run.\n")
+                return
+
+        # Version is OK. Nothing to do.
+        if self.cur_version != (0, 0, 0) and self.cur_version >= RECOMMENDED_VERSION:
+            return
+
+        if self.latest_avail_ver:
+            latest_avail_ver = PythonVersion.ver_str(self.latest_avail_ver)
+
+        if not self.need_sphinx:
+            # sphinx-build is present and its version is >= $min_version
+
+            # only recommend enabling a newer virtenv version if makes sense.
+            if self.latest_avail_ver and self.latest_avail_ver > self.cur_version:
+                print(f"\nYou may also use the newer Sphinx version {latest_avail_ver} with:")
+                if f"{self.virtenv_prefix}" in os.getcwd():
+                    print("\tdeactivate")
+                print(f"\t. {self.activate_cmd}")
+                self.deactivate_help()
+                return
+
+            if self.latest_avail_ver and self.latest_avail_ver >= RECOMMENDED_VERSION:
+                return
+
+        if not self.virtualenv:
+            # No sphinx either via package or via virtenv. As we can't
+            # Compare the versions here, just return, recommending the
+            # user to install it from the package distro.
+            if not self.latest_avail_ver or self.latest_avail_ver == (0, 0, 0):
+                return
+
+            # User doesn't want a virtenv recommendation, but he already
+            # installed one via virtenv with a newer version.
+            # So, print commands to enable it
+            if self.latest_avail_ver > self.cur_version:
+                print(f"\nYou may also use the Sphinx virtualenv version {latest_avail_ver} with:")
+                if f"{self.virtenv_prefix}" in os.getcwd():
+                    print("\tdeactivate")
+                print(f"\t. {self.activate_cmd}")
+                self.deactivate_help()
+                return
+            print("\n")
+        else:
+            if self.need_sphinx:
+                self.deps.need += 1
+
+        # Suggest newer versions if current ones are too old
+        if self.latest_avail_ver and self.latest_avail_ver >= self.min_version:
+            if self.latest_avail_ver >= RECOMMENDED_VERSION:
+                print(f"\nNeed to activate Sphinx (version {latest_avail_ver}) on virtualenv with:")
+                print(f"\t. {self.activate_cmd}")
+                self.deactivate_help()
+                return
+
+            # Version is above the minimal required one, but may be
+            # below the recommended one. So, print warnings/notes
+            if self.latest_avail_ver < RECOMMENDED_VERSION:
+                print(f"Warning: It is recommended at least Sphinx version {RECOMMENDED_VERSION}.")
+
+        # At this point, either it needs Sphinx or upgrade is recommended,
+        # both via pip
+
+        if self.rec_sphinx_upgrade:
+            if not self.virtualenv:
+                print("Instead of install/upgrade Python Sphinx pkg, you could use pip/pypi with:\n\n")
+            else:
+                print("To upgrade Sphinx, use:\n\n")
+        else:
+            print("\nSphinx needs to be installed either:\n1) via pip/pypi with:\n")
+
+        if not virtualenv_cmd:
+            print("   Currently not possible.\n")
+            print("   Please upgrade Python to a newer version and run this script again")
+        else:
+            print(f"\t{virtualenv_cmd} {self.virtenv_dir}")
+            print(f"\t. {self.virtenv_dir}/bin/activate")
+            print(f"\tpip install -r {self.requirement_file}")
+            self.deactivate_help()
+
+        if self.package_supported:
+            self.recommend_package()
+
+        print("\n" \
+              "   Please note that Sphinx currentlys produce false-positive\n" \
+              "   warnings when the same name is used for more than one type (functions,\n" \
+              "   structs, enums,...). This is known Sphinx bug. For more details, see:\n" \
+              "\thttps://github.com/sphinx-doc/sphinx/pull/8313")
+
+    def check_needs(self):
+        """
+        Main method that checks needed dependencies and provides
+        recommendations.
+        """
+        self.python_cmd = sys.executable
+
+        # Check if Sphinx is already accessible from current environment
+        self.check_sphinx(self.conf)
+
+        if self.system_release:
+            print(f"Detected OS: {self.system_release}.")
+        else:
+            print("Unknown OS")
+        if self.cur_version != (0, 0, 0):
+            ver = PythonVersion.ver_str(self.cur_version)
+            print(f"Sphinx version: {ver}\n")
+
+        # Check the type of virtual env, depending on Python version
+        virtualenv_cmd = None
+
+        if sys.version_info < MIN_PYTHON_VERSION:
+            min_ver = ver_str(MIN_PYTHON_VERSION)
+            print(f"ERROR: at least python {min_ver} is required to build the kernel docs")
+            self.need_sphinx = 1
+
+        self.venv_ver = self.recommend_sphinx_upgrade()
+
+        if self.need_pip:
+            if sys.version_info < MIN_PYTHON_VERSION:
+                self.need_pip = False
+                print("Warning: python version is not supported.")
+            else:
+                virtualenv_cmd = f"{self.python_cmd} -m venv"
+                self.check_python_module("ensurepip")
+
+        # Check for needed programs/tools
+        self.check_perl_module("Pod::Usage", DepManager.SYSTEM_MANDATORY)
+
+        self.check_program("make", DepManager.SYSTEM_MANDATORY)
+        self.check_program("which", DepManager.SYSTEM_MANDATORY)
+
+        self.check_program("dot", DepManager.SYSTEM_OPTIONAL)
+        self.check_program("convert", DepManager.SYSTEM_OPTIONAL)
+
+        self.check_python_module("yaml")
+
+        if self.pdf:
+            self.check_program("xelatex", DepManager.PDF_MANDATORY)
+            self.check_program("rsvg-convert", DepManager.PDF_MANDATORY)
+            self.check_program("latexmk", DepManager.PDF_MANDATORY)
+
+        # Do distro-specific checks and output distro-install commands
+        cmd = self.get_install()
+        if cmd:
+            print(cmd)
+
+        # If distro requires some special instructions, print here.
+        # Please notice that get_install() needs to be called first.
+        if self.distro_msg:
+            print("\n" + self.distro_msg)
+
+        if not self.python_cmd:
+            if self.need == 1:
+                sys.exit("Can't build as 1 mandatory dependency is missing")
+            elif self.need:
+                sys.exit(f"Can't build as {self.need} mandatory dependencies are missing")
+
+        # Check if sphinx-build is called sphinx-build-3
+        if self.need_symlink:
+            sphinx_path = self.which("sphinx-build-3")
+            if sphinx_path:
+                print(f"\tsudo ln -sf {sphinx_path} /usr/bin/sphinx-build\n")
+
+        self.recommend_sphinx_version(virtualenv_cmd)
+        print("")
+
+        if not self.deps.optional:
+            print("All optional dependencies are met.")
+
+        if self.deps.need == 1:
+            sys.exit("Can't build as 1 mandatory dependency is missing")
+        elif self.deps.need:
+            sys.exit(f"Can't build as {self.deps.need} mandatory dependencies are missing")
+
+        print("Needed package dependencies are met.")
+
+DESCRIPTION = """
+Process some flags related to Sphinx installation and documentation build.
+"""
+
+
+def main():
+    """Main function"""
+    parser = argparse.ArgumentParser(description=DESCRIPTION)
+
+    parser.add_argument(
+        "--no-virtualenv",
+        action="store_false",
+        dest="virtualenv",
+        help="Recommend installing Sphinx instead of using a virtualenv",
+    )
+
+    parser.add_argument(
+        "--no-pdf",
+        action="store_false",
+        dest="pdf",
+        help="Don't check for dependencies required to build PDF docs",
+    )
+
+    parser.add_argument(
+        "--version-check",
+        action="store_true",
+        dest="version_check",
+        help="If version is compatible, don't check for missing dependencies",
+    )
+
+    args = parser.parse_args()
+
+    checker = SphinxDependencyChecker(args)
+
+    PythonVersion.check_python(MIN_PYTHON_VERSION,
+                               bail_out=True, success_on_error=True)
+    checker.check_needs()
+
+# Call main if not used as module
+if __name__ == "__main__":
+    main()
+===================================================
+
+test_doc_build.py
+===================================================
+#!/usr/bin/env python3
+# SPDX-License-Identifier: GPL-2.0
+# Copyright(c) 2025: Mauro Carvalho Chehab <mchehab+huawei@kernel.org>
+#
+# pylint: disable=R0903,R0912,R0913,R0914,R0917,C0301
+
+"""
+Install minimal supported requirements for different Sphinx versions
+and optionally test the build.
+"""
+
+import argparse
+import asyncio
+import os.path
+import shutil
+import sys
+import time
+import subprocess
+
+# Minimal python version supported by the building system.
+
+PYTHON = os.path.basename(sys.executable)
+
+min_python_bin = None
+
+for i in range(9, 13):
+    p = f"python3.{i}"
+    if shutil.which(p):
+        min_python_bin = p
+        break
+
+if not min_python_bin:
+    min_python_bin = PYTHON
+
+# Starting from 8.0, Python 3.9 is not supported anymore.
+PYTHON_VER_CHANGES = {(8, 0, 0): PYTHON}
+
+DEFAULT_VERSIONS_TO_TEST = [
+    (3, 4, 3),   # Minimal supported version
+    (5, 3, 0),   # CentOS Stream 9 / AlmaLinux 9
+    (6, 1, 1),   # Debian 12
+    (7, 2, 1),   # openSUSE Leap 15.6
+    (7, 2, 6),   # Ubuntu 24.04 LTS
+    (7, 4, 7),   # Ubuntu 24.10
+    (7, 3, 0),   # openSUSE Tumbleweed
+    (8, 1, 3),   # Fedora 42
+    (8, 2, 3)    # Latest version - covers rolling distros
+]
+
+# Sphinx versions to be installed and their incremental requirements
+SPHINX_REQUIREMENTS = {
+    # Oldest versions we support for each package required by Sphinx 3.4.3
+    (3, 4, 3): {
+        "docutils": "0.16",
+        "alabaster": "0.7.12",
+        "babel": "2.8.0",
+        "certifi": "2020.6.20",
+        "docutils": "0.16",
+        "idna": "2.10",
+        "imagesize": "1.2.0",
+        "Jinja2": "2.11.2",
+        "MarkupSafe": "1.1.1",
+        "packaging": "20.4",
+        "Pygments": "2.6.1",
+        "PyYAML": "5.1",
+        "requests": "2.24.0",
+        "snowballstemmer": "2.0.0",
+        "sphinxcontrib-applehelp": "1.0.2",
+        "sphinxcontrib-devhelp": "1.0.2",
+        "sphinxcontrib-htmlhelp": "1.0.3",
+        "sphinxcontrib-jsmath": "1.0.1",
+        "sphinxcontrib-qthelp": "1.0.3",
+        "sphinxcontrib-serializinghtml": "1.1.4",
+        "urllib3": "1.25.9",
+    },
+
+    # Update package dependencies to a more modern base. The goal here
+    # is to avoid to many incremental changes for the next entries
+    (3, 5, 0): {
+        "alabaster": "0.7.13",
+        "babel": "2.17.0",
+        "certifi": "2025.6.15",
+        "idna": "3.10",
+        "imagesize": "1.4.1",
+        "packaging": "25.0",
+        "Pygments": "2.8.1",
+        "requests": "2.32.4",
+        "snowballstemmer": "3.0.1",
+        "sphinxcontrib-applehelp": "1.0.4",
+        "sphinxcontrib-htmlhelp": "2.0.1",
+        "sphinxcontrib-serializinghtml": "1.1.5",
+        "urllib3": "2.0.0",
+    },
+
+    # Starting from here, ensure all docutils versions are covered with
+    # supported Sphinx versions. Other packages are upgraded only when
+    # required by pip
+    (4, 0, 0): {
+        "PyYAML": "5.1",
+    },
+    (4, 1, 0): {
+        "docutils": "0.17",
+        "Pygments": "2.19.1",
+        "Jinja2": "3.0.3",
+        "MarkupSafe": "2.0",
+    },
+    (4, 3, 0): {},
+    (4, 4, 0): {},
+    (4, 5, 0): {
+        "docutils": "0.17.1",
+    },
+    (5, 0, 0): {},
+    (5, 1, 0): {},
+    (5, 2, 0): {
+        "docutils": "0.18",
+        "Jinja2": "3.1.2",
+        "MarkupSafe": "2.0",
+        "PyYAML": "5.3.1",
+    },
+    (5, 3, 0): {
+        "docutils": "0.18.1",
+    },
+    (6, 0, 0): {},
+    (6, 1, 0): {},
+    (6, 2, 0): {
+        "PyYAML": "5.4.1",
+    },
+    (7, 0, 0): {},
+    (7, 1, 0): {},
+    (7, 2, 0): {
+        "docutils": "0.19",
+        "PyYAML": "6.0.1",
+        "sphinxcontrib-serializinghtml": "1.1.9",
+    },
+    (7, 2, 6): {
+        "docutils": "0.20",
+    },
+    (7, 3, 0): {
+        "alabaster": "0.7.14",
+        "PyYAML": "6.0.1",
+        "tomli": "2.0.1",
+    },
+    (7, 4, 0): {
+        "docutils": "0.20.1",
+        "PyYAML": "6.0.1",
+    },
+    (8, 0, 0): {
+        "docutils": "0.21",
+    },
+    (8, 1, 0): {
+        "docutils": "0.21.1",
+        "PyYAML": "6.0.1",
+        "sphinxcontrib-applehelp": "1.0.7",
+        "sphinxcontrib-devhelp": "1.0.6",
+        "sphinxcontrib-htmlhelp": "2.0.6",
+        "sphinxcontrib-qthelp": "1.0.6",
+    },
+    (8, 2, 0): {
+        "docutils": "0.21.2",
+        "PyYAML": "6.0.1",
+        "sphinxcontrib-serializinghtml": "1.1.9",
+    },
+}
+
+
+class AsyncCommands:
+    """Excecute command synchronously"""
+
+    def __init__(self, fp=None):
+
+        self.stdout = None
+        self.stderr = None
+        self.output = None
+        self.fp = fp
+
+    def log(self, out, verbose, is_info=True):
+        out = out.removesuffix('\n')
+
+        if verbose:
+            if is_info:
+                print(out)
+            else:
+                print(out, file=sys.stderr)
+
+        if self.fp:
+            self.fp.write(out + "\n")
+
+    async def _read(self, stream, verbose, is_info):
+        """Ancillary routine to capture while displaying"""
+
+        while stream is not None:
+            line = await stream.readline()
+            if line:
+                out = line.decode("utf-8", errors="backslashreplace")
+                self.log(out, verbose, is_info)
+                if is_info:
+                    self.stdout += out
+                else:
+                    self.stderr += out
+            else:
+                break
+
+    async def run(self, cmd, capture_output=False, check=False,
+                  env=None, verbose=True):
+
+        """
+        Execute an arbitrary command, handling errors.
+
+        Please notice that this class is not thread safe
+        """
+
+        self.stdout = ""
+        self.stderr = ""
+
+        self.log("$ " + " ".join(cmd), verbose)
+
+        proc = await asyncio.create_subprocess_exec(cmd[0],
+                                                    *cmd[1:],
+                                                    env=env,
+                                                    stdout=asyncio.subprocess.PIPE,
+                                                    stderr=asyncio.subprocess.PIPE)
+
+        # Handle input and output in realtime
+        await asyncio.gather(
+            self._read(proc.stdout, verbose, True),
+            self._read(proc.stderr, verbose, False),
+        )
+
+        await proc.wait()
+
+        if check and proc.returncode > 0:
+            raise subprocess.CalledProcessError(returncode=proc.returncode,
+                                                cmd=" ".join(cmd),
+                                                output=self.stdout,
+                                                stderr=self.stderr)
+
+        if capture_output:
+            if proc.returncode > 0:
+                self.log(f"Error {proc.returncode}", verbose=True, is_info=False)
+                return ""
+
+            return self.output
+
+        ret = subprocess.CompletedProcess(args=cmd,
+                                          returncode=proc.returncode,
+                                          stdout=self.stdout,
+                                          stderr=self.stderr)
+
+        return ret
+
+
+class SphinxVenv:
+    """
+    Installs Sphinx on one virtual env per Sphinx version with a minimal
+    set of dependencies, adjusting them to each specific version.
+    """
+
+    def __init__(self):
+        """Initialize instance variables"""
+
+        self.built_time = {}
+        self.first_run = True
+
+    async def _handle_version(self, args, fp,
+                              cur_ver, cur_requirements, python_bin):
+        """Handle a single Sphinx version"""
+
+        cmd = AsyncCommands(fp)
+
+        ver = ".".join(map(str, cur_ver))
+
+        if not self.first_run and args.wait_input and args.build:
+            ret = input("Press Enter to continue or 'a' to abort: ").strip().lower()
+            if ret == "a":
+                print("Aborted.")
+                sys.exit()
+        else:
+            self.first_run = False
+
+        venv_dir = f"Sphinx_{ver}"
+        req_file = f"requirements_{ver}.txt"
+
+        cmd.log(f"\nSphinx {ver} with {python_bin}", verbose=True)
+
+        # Create venv
+        await cmd.run([python_bin, "-m", "venv", venv_dir],
+                      verbose=args.verbose, check=True)
+        pip = os.path.join(venv_dir, "bin/pip")
+
+        # Create install list
+        reqs = []
+        for pkg, verstr in cur_requirements.items():
+            reqs.append(f"{pkg}=={verstr}")
+
+        reqs.append(f"Sphinx=={ver}")
+
+        await cmd.run([pip, "install"] + reqs, check=True, verbose=args.verbose)
+
+        # Freeze environment
+        result = await cmd.run([pip, "freeze"], verbose=False, check=True)
+
+        # Pip install succeeded. Write requirements file
+        if args.req_file:
+            with open(req_file, "w", encoding="utf-8") as fp:
+                fp.write(result.stdout)
+
+        if args.build:
+            start_time = time.time()
+
+            # Prepare a venv environment
+            env = os.environ.copy()
+            bin_dir = os.path.join(venv_dir, "bin")
+            env["PATH"] = bin_dir + ":" + env["PATH"]
+            env["VIRTUAL_ENV"] = venv_dir
+            if "PYTHONHOME" in env:
+                del env["PYTHONHOME"]
+
+            # Test doc build
+            await cmd.run(["make", "cleandocs"], env=env, check=True)
+            make = ["make"]
+
+            if args.output:
+                sphinx_build = os.path.realpath(f"{bin_dir}/sphinx-build")
+                make += [f"O={args.output}", f"SPHINXBUILD={sphinx_build}"]
+
+            if args.make_args:
+                make += args.make_args
+
+            make += args.targets
+
+            if args.verbose:
+                cmd.log(f". {bin_dir}/activate", verbose=True)
+            await cmd.run(make, env=env, check=True, verbose=True)
+            if args.verbose:
+                cmd.log("deactivate", verbose=True)
+
+            end_time = time.time()
+            elapsed_time = end_time - start_time
+            hours, minutes = divmod(elapsed_time, 3600)
+            minutes, seconds = divmod(minutes, 60)
+
+            hours = int(hours)
+            minutes = int(minutes)
+            seconds = int(seconds)
+
+            self.built_time[ver] = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+
+            cmd.log(f"Finished doc build for Sphinx {ver}. Elapsed time: {self.built_time[ver]}", verbose=True)
+
+    async def run(self, args):
+        """
+        Navigate though multiple Sphinx versions, handling each of them
+        on a loop.
+        """
+
+        if args.log:
+            fp = open(args.log, "w", encoding="utf-8")
+            if not args.verbose:
+                args.verbose = False
+        else:
+            fp = None
+            if not args.verbose:
+                args.verbose = True
+
+        cur_requirements = {}
+        python_bin = min_python_bin
+
+        vers = set(SPHINX_REQUIREMENTS.keys()) | set(args.versions)
+
+        for cur_ver in sorted(vers):
+            if cur_ver in SPHINX_REQUIREMENTS:
+                new_reqs = SPHINX_REQUIREMENTS[cur_ver]
+                cur_requirements.update(new_reqs)
+
+            if cur_ver in PYTHON_VER_CHANGES:          # pylint: disable=R1715
+                python_bin = PYTHON_VER_CHANGES[cur_ver]
+
+            if cur_ver not in args.versions:
+                continue
+
+            if args.min_version:
+                if cur_ver < args.min_version:
+                    continue
+
+            if args.max_version:
+                if cur_ver > args.max_version:
+                    break
+
+            await self._handle_version(args, fp, cur_ver, cur_requirements,
+                                       python_bin)
+
+        if args.build:
+            cmd = AsyncCommands(fp)
+            cmd.log("\nSummary:", verbose=True)
+            for ver, elapsed_time in sorted(self.built_time.items()):
+                cmd.log(f"\tSphinx {ver} elapsed time: {elapsed_time}",
+                        verbose=True)
+
+        if fp:
+            fp.close()
+
+def parse_version(ver_str):
+    """Convert a version string into a tuple."""
+
+    return tuple(map(int, ver_str.split(".")))
+
+
+DEFAULT_VERS = "    - "
+DEFAULT_VERS += "\n    - ".join(map(lambda v: f"{v[0]}.{v[1]}.{v[2]}",
+                                    DEFAULT_VERSIONS_TO_TEST))
+
+SCRIPT = os.path.relpath(__file__)
+
+DESCRIPTION = f"""
+This tool allows creating Python virtual environments for different
+Sphinx versions that are supported by the Linux Kernel build system.
+
+Besides creating the virtual environment, it can also test building
+the documentation using "make htmldocs" (and/or other doc targets).
+
+If called without "--versions" argument, it covers the versions shipped
+on major distros, plus the lowest supported version:
+
+{DEFAULT_VERS}
+
+A typical usage is to run:
+
+   {SCRIPT} -m -l sphinx_builds.log
+
+This will create one virtual env for the default version set and run
+"make htmldocs" for each version, creating a log file with the
+excecuted commands on it.
+
+NOTE: The build time can be very long, specially on old versions. Also, there
+is a known bug with Sphinx version 6.0.x: each subprocess uses a lot of
+memory. That, together with "-jauto" may cause OOM killer to cause
+failures at the doc generation. To minimize the risk, you may use the
+"-a" command line parameter to constrain the built directories and/or
+reduce the number of threads from "-jauto" to, for instance, "-j4":
+
+    {SCRIPT} -m -V 6.0.1 -a "SPHINXDIRS=process" "SPHINXOPTS='-j4'"
+
+"""
+
+MAKE_TARGETS = [
+    "htmldocs",
+    "texinfodocs",
+    "infodocs",
+    "latexdocs",
+    "pdfdocs",
+    "epubdocs",
+    "xmldocs",
+]
+
+async def main():
+    """Main program"""
+
+    parser = argparse.ArgumentParser(description=DESCRIPTION,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
+
+    ver_group = parser.add_argument_group("Version range options")
+
+    ver_group.add_argument('-V', '--versions', nargs="*",
+                           default=DEFAULT_VERSIONS_TO_TEST,type=parse_version,
+                           help='Sphinx versions to test')
+    ver_group.add_argument('--min-version', "--min", type=parse_version,
+                           help='Sphinx minimal version')
+    ver_group.add_argument('--max-version', "--max", type=parse_version,
+                           help='Sphinx maximum version')
+    ver_group.add_argument('-f', '--full', action='store_true',
+                           help='Add all Sphinx (major,minor) supported versions to the version range')
+
+    build_group = parser.add_argument_group("Build options")
+
+    build_group.add_argument('-b', '--build', action='store_true',
+                             help='Build documentation')
+    build_group.add_argument('-a', '--make-args', nargs="*",
+                             help='extra arguments for make, like SPHINXDIRS=netlink/specs',
+                        )
+    build_group.add_argument('-t', '--targets', nargs="+", choices=MAKE_TARGETS,
+                             default=[MAKE_TARGETS[0]],
+                             help="make build targets. Default: htmldocs.")
+    build_group.add_argument("-o", '--output',
+                             help="output directory for the make O=OUTPUT")
+
+    other_group = parser.add_argument_group("Other options")
+
+    other_group.add_argument('-r', '--req-file', action='store_true',
+                             help='write a requirements.txt file')
+    other_group.add_argument('-l', '--log',
+                             help='Log command output on a file')
+    other_group.add_argument('-v', '--verbose', action='store_true',
+                             help='Verbose all commands')
+    other_group.add_argument('-i', '--wait-input', action='store_true',
+                        help='Wait for an enter before going to the next version')
+
+    args = parser.parse_args()
+
+    if not args.make_args:
+        args.make_args = []
+
+    sphinx_versions = sorted(list(SPHINX_REQUIREMENTS.keys()))
+
+    if args.full:
+        args.versions += list(SPHINX_REQUIREMENTS.keys())
+
+    venv = SphinxVenv()
+    await venv.run(args)
+
+
+# Call main method
+if __name__ == "__main__":
+    asyncio.run(main())
+===================================================
+

@@ -20,7 +20,6 @@
 #include <net/dst.h>
 #include <net/ip.h>
 #include <net/sock.h>
-#include <net/dst_metadata.h>
 #include <net/tcp_states.h> /* for TCP_TIME_WAIT */
 #include <net/netfilter/nf_tables.h>
 #include <net/netfilter/nf_tables_core.h>
@@ -117,12 +116,12 @@ nft_meta_get_eval_pkttype_lo(const struct nft_pktinfo *pkt,
 			nft_reg_store8(dest, PACKET_MULTICAST);
 			break;
 		default:
-			DEBUG_NET_WARN_ON_ONCE(1);
+			WARN_ON_ONCE(1);
 			return false;
 		}
 		break;
 	default:
-		DEBUG_NET_WARN_ON_ONCE(1);
+		WARN_ON_ONCE(1);
 		return false;
 	}
 
@@ -280,12 +279,11 @@ static bool nft_meta_get_eval_ifname(enum nft_meta_keys key, u32 *dest,
 static noinline bool
 nft_meta_get_eval_rtclassid(const struct sk_buff *skb, u32 *dest)
 {
-	const struct dst_entry *dst;
+	const struct dst_entry *dst = skb_dst(skb);
 
-	if (!skb_valid_dst(skb))
+	if (!dst)
 		return false;
 
-	dst = skb_dst(skb);
 	*dest = dst->tclassid;
 	return true;
 }
@@ -462,7 +460,7 @@ void nft_meta_get_eval(const struct nft_expr *expr,
 		nft_meta_get_eval_sdifname(dest, pkt);
 		break;
 	default:
-		DEBUG_NET_WARN_ON_ONCE(1);
+		WARN_ON(1);
 		goto err;
 	}
 	return;
@@ -508,7 +506,7 @@ void nft_meta_set_eval(const struct nft_expr *expr,
 		break;
 #endif
 	default:
-		DEBUG_NET_WARN_ON_ONCE(1);
+		WARN_ON(1);
 	}
 }
 EXPORT_SYMBOL_GPL(nft_meta_set_eval);
@@ -889,7 +887,7 @@ void nft_meta_inner_eval(const struct nft_expr *expr,
 		nft_reg_store8(dest, tun_ctx->l4proto);
 		break;
 	default:
-		DEBUG_NET_WARN_ON_ONCE(1);
+		WARN_ON_ONCE(1);
 		goto err;
 	}
 	return;

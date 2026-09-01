@@ -124,9 +124,7 @@ xfs_growfs_data_private(
 			mp->m_sb.sb_rextsize);
 	if (error)
 		return error;
-
-	nagcount = xfs_growfs_compute_agcount(mp, &nb);
-	delta = nb - mp->m_sb.sb_dblocks;
+	xfs_growfs_compute_deltas(mp, &nb, &delta, &nagcount);
 
 	/*
 	 * Reject filesystems with a single AG because they are not
@@ -501,7 +499,7 @@ xfs_do_force_shutdown(
 		return;
 	}
 	if (mp->m_sb_bp)
-		xfs_buf_set_uptodate(mp->m_sb_bp);
+		mp->m_sb_bp->b_flags |= XBF_DONE;
 
 	if (flags & SHUTDOWN_FORCE_UMOUNT)
 		xfs_alert(mp, "User initiated shutdown received.");

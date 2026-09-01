@@ -288,7 +288,6 @@ macro_rules! kunit_unsafe_test_suite {
                     log: ::core::ptr::null_mut(),
                     suite_init_err: 0,
                     is_init: false,
-                    status: kernel::bindings::kunit_status_KUNIT_SUCCESS,
                 };
 
             #[used(compiler)]
@@ -330,7 +329,6 @@ pub fn in_kunit_test() -> bool {
     !unsafe { bindings::kunit_get_current_test() }.is_null()
 }
 
-#[cfg(CONFIG_RUST_KUNIT_SELFTEST)]
 #[kunit_tests(rust_kernel_kunit)]
 mod tests {
     use super::*;

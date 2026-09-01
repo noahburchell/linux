@@ -2,24 +2,20 @@
 #include <errno.h>
 #include <math.h>
 #include <stdio.h>
-
-#include <linux/zalloc.h>
-
-#include "cgroup.h"
+#include "evsel.h"
+#include "stat.h"
 #include "color.h"
 #include "debug.h"
-#include "evlist.h"
-#include "evsel.h"
-#include "expr.h"
-#include "hashmap.h"
-#include "iostat.h"
-#include "metricgroup.h"
 #include "pmu.h"
-#include "pmus.h"
 #include "rblist.h"
-#include "stat.h"
-#include "tool_pmu.h"
+#include "evlist.h"
+#include "expr.h"
+#include "metricgroup.h"
+#include "cgroup.h"
 #include "units.h"
+#include "iostat.h"
+#include "util/hashmap.h"
+#include "tool_pmu.h"
 
 static bool tool_pmu__is_time_event(const struct perf_stat_config *config,
 				   const struct evsel *evsel, int *tool_aggr_idx)
@@ -57,7 +53,6 @@ static int prepare_metric(struct perf_stat_config *config,
 
 	for (i = 0; metric_events[i]; i++) {
 		int source_count = 0, tool_aggr_idx;
-		int aggr_nr = 1;
 		bool is_tool_time =
 			tool_pmu__is_time_event(config, metric_events[i], &tool_aggr_idx);
 		struct perf_stat_evsel *ps = metric_events[i]->stats;
@@ -94,7 +89,6 @@ static int prepare_metric(struct perf_stat_config *config,
 			 */
 			val = NAN;
 			source_count = 0;
-			aggr_nr = 0;
 		} else {
 			struct perf_stat_aggr *aggr =
 				&ps->aggr[is_tool_time ? tool_aggr_idx : aggr_idx];
@@ -102,7 +96,6 @@ static int prepare_metric(struct perf_stat_config *config,
 			if (aggr->counts.run == 0) {
 				val = NAN;
 				source_count = 0;
-				aggr_nr = 0;
 			} else {
 				val = aggr->counts.val;
 				if (is_tool_time) {
@@ -111,14 +104,13 @@ static int prepare_metric(struct perf_stat_config *config,
 				}
 				if (!source_count)
 					source_count = evsel__source_count(metric_events[i]);
-				aggr_nr = aggr->nr ?: 1;
 			}
 		}
 		n = strdup(evsel__metric_id(metric_events[i]));
 		if (!n)
 			return -ENOMEM;
 
-		expr__add_id_val_source_count_aggr_nr(pctx, n, val, source_count, aggr_nr);
+		expr__add_id_val_source_count(pctx, n, val, source_count);
 	}
 
 	for (int j = 0; metric_refs && metric_refs[j].metric_name; j++) {
@@ -287,7 +279,7 @@ void *perf_stat__print_shadow_stats_metricgroup(struct perf_stat_config *config,
 	void *ctxp = out->ctx;
 	bool header_printed = false;
 	const char *name = NULL;
-	struct rblist *metric_events = evlist__metric_events(evsel->evlist);
+	struct rblist *metric_events = &evsel->evlist->metric_events;
 
 	me = metricgroup__lookup(metric_events, evsel, false);
 	if (me == NULL)
@@ -355,5 +347,5 @@ bool perf_stat__skip_metric_event(struct evsel *evsel)
 	if (!evsel->default_metricgroup)
 		return false;
 
-	return !metricgroup__lookup(evlist__metric_events(evsel->evlist), evsel, false);
+	return !metricgroup__lookup(&evsel->evlist->metric_events, evsel, false);
 }

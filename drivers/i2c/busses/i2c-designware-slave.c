@@ -19,8 +19,6 @@
 #include <linux/pm_runtime.h>
 #include <linux/regmap.h>
 
-#include <linux/designware_i2c.h>
-
 #include "i2c-designware-core.h"
 
 int i2c_dw_reg_slave(struct i2c_client *slave)

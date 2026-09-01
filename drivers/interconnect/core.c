@@ -432,26 +432,6 @@ struct icc_path *devm_of_icc_get(struct device *dev, const char *name)
 		return ERR_PTR(-ENOMEM);
 
 	path = of_icc_get(dev, name);
-	if (!IS_ERR_OR_NULL(path)) {
-		*ptr = path;
-		devres_add(dev, ptr);
-	} else {
-		devres_free(ptr);
-	}
-
-	return path;
-}
-EXPORT_SYMBOL_GPL(devm_of_icc_get);
-
-struct icc_path *devm_of_icc_get_by_index(struct device *dev, int idx)
-{
-	struct icc_path **ptr, *path;
-
-	ptr = devres_alloc(devm_icc_release, sizeof(*ptr), GFP_KERNEL);
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
-
-	path = of_icc_get_by_index(dev, idx);
 	if (!IS_ERR(path)) {
 		*ptr = path;
 		devres_add(dev, ptr);
@@ -461,7 +441,7 @@ struct icc_path *devm_of_icc_get_by_index(struct device *dev, int idx)
 
 	return path;
 }
-EXPORT_SYMBOL_GPL(devm_of_icc_get_by_index);
+EXPORT_SYMBOL_GPL(devm_of_icc_get);
 
 /**
  * of_icc_get_by_index() - get a path handle from a DT node based on index
@@ -548,7 +528,7 @@ struct icc_path *of_icc_get_by_index(struct device *dev, int idx)
 	path->name = kasprintf(GFP_KERNEL, "%s-%s",
 			       src_data->node->name, dst_data->node->name);
 	if (!path->name) {
-		icc_put(path);
+		kfree(path);
 		path = ERR_PTR(-ENOMEM);
 	}
 
@@ -646,9 +626,8 @@ struct icc_path *icc_get(struct device *dev, const char *src, const char *dst)
 
 	path->name = kasprintf(GFP_KERNEL, "%s-%s", src_node->name, dst_node->name);
 	if (!path->name) {
-		mutex_unlock(&icc_lock);
-		icc_put(path);
-		return ERR_PTR(-ENOMEM);
+		kfree(path);
+		path = ERR_PTR(-ENOMEM);
 	}
 out:
 	mutex_unlock(&icc_lock);

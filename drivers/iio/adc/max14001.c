@@ -15,6 +15,7 @@
 #include <linux/bits.h>
 #include <linux/cleanup.h>
 #include <linux/device.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -362,8 +363,8 @@ static struct max14001_chip_info max14002_chip_info = {
 };
 
 static const struct spi_device_id max14001_id_table[] = {
-	{ .name = "max14001", .driver_data = (kernel_ulong_t)&max14001_chip_info },
-	{ .name = "max14002", .driver_data = (kernel_ulong_t)&max14002_chip_info },
+	{ "max14001", (kernel_ulong_t)&max14001_chip_info },
+	{ "max14002", (kernel_ulong_t)&max14002_chip_info },
 	{ }
 };
 

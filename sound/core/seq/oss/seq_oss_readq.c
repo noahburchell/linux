@@ -34,9 +34,15 @@ snd_seq_oss_readq_new(struct seq_oss_devinfo *dp, int maxlen)
 {
 	struct seq_oss_readq *q;
 
-	q = kzalloc_flex(*q, q, maxlen);
+	q = kzalloc_obj(*q);
 	if (!q)
 		return NULL;
+
+	q->q = kzalloc_objs(union evrec, maxlen);
+	if (!q->q) {
+		kfree(q);
+		return NULL;
+	}
 
 	q->maxlen = maxlen;
 	q->qlen = 0;
@@ -55,7 +61,10 @@ snd_seq_oss_readq_new(struct seq_oss_devinfo *dp, int maxlen)
 void
 snd_seq_oss_readq_delete(struct seq_oss_readq *q)
 {
-	kfree(q);
+	if (q) {
+		kfree(q->q);
+		kfree(q);
+	}
 }
 
 /*

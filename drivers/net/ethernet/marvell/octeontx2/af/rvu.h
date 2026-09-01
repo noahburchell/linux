@@ -553,19 +553,17 @@ struct npc_kpu_profile_adapter {
 	const char			*name;
 	u64				version;
 	const struct npc_lt_def_cfg	*lt_def;
-	struct npc_kpu_profile_action	*ikpu; /* array[pkinds] */
-	struct npc_kpu_profile_action	*ikpu2; /* array[pkinds] */
-	struct npc_kpu_profile	*kpu; /* array[kpus] */
+	const struct npc_kpu_profile_action	*ikpu; /* array[pkinds] */
+	const struct npc_kpu_profile	*kpu; /* array[kpus] */
 	union npc_mcam_key_prfl {
-		const struct npc_mcam_kex		*mkex;
+		struct npc_mcam_kex		*mkex;
 					/* used for cn9k and cn10k */
-		const struct npc_mcam_kex_extr	*mkex_extr; /* used for cn20k */
+		struct npc_mcam_kex_extr	*mkex_extr; /* used for cn20k */
 	} mcam_kex_prfl;
 	struct npc_mcam_kex_hash	*mkex_hash;
 	bool				custom;
 	size_t				pkinds;
 	size_t				kpus;
-	bool				from_fs;
 };
 
 #define RVU_SWITCH_LBK_CHAN	63
@@ -636,7 +634,7 @@ struct rvu {
 
 	/* Firmware data */
 	struct rvu_fwdata	*fwdata;
-	const void		*kpu_fwdata;
+	void			*kpu_fwdata;
 	size_t			kpu_fwdata_sz;
 	void __iomem		*kpu_prfl_addr;
 
@@ -1115,8 +1113,6 @@ void npc_read_mcam_entry(struct rvu *rvu, struct npc_mcam *mcam,
 			 u8 *intf, u8 *ena);
 int npc_config_cntr_default_entries(struct rvu *rvu, bool enable);
 bool is_cgx_config_permitted(struct rvu *rvu, u16 pcifunc);
-bool rvu_cgx_check_permission_and_set_pkind(struct rvu *rvu, u16 pcifunc, int pkind);
-bool rvu_cgx_is_pkind_config_permitted(struct rvu *rvu, u16 pcifunc);
 bool is_mac_feature_supported(struct rvu *rvu, int pf, int feature);
 u32  rvu_cgx_get_fifolen(struct rvu *rvu);
 void *rvu_first_cgx_pdata(struct rvu *rvu);
@@ -1183,7 +1179,7 @@ void rvu_switch_enable_lbk_link(struct rvu *rvu, u16 pcifunc, bool ena);
 
 int rvu_npc_set_parse_mode(struct rvu *rvu, u16 pcifunc, u64 mode, u8 dir,
 			   u64 pkind, u8 var_len_off, u8 var_len_off_mask,
-			   u8 shift_dir, u8 skip_size);
+			   u8 shift_dir);
 int rvu_get_hwvf(struct rvu *rvu, int pcifunc);
 
 /* CN10K MCS */

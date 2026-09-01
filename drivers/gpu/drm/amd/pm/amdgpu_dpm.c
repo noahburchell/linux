@@ -33,8 +33,8 @@
 #include <linux/power_supply.h>
 #include "amdgpu_smu.h"
 
-#define amdgpu_dpm_notify_ac_dc(adev) \
-		((adev)->powerplay.pp_funcs->notify_ac_dc((adev)->powerplay.pp_handle))
+#define amdgpu_dpm_enable_bapm(adev, e) \
+		((adev)->powerplay.pp_funcs->enable_bapm((adev)->powerplay.pp_handle, (e)))
 
 #define amdgpu_dpm_is_legacy_dpm(adev) ((adev)->powerplay.pp_handle == (adev))
 
@@ -504,11 +504,11 @@ void amdgpu_pm_acpi_event_handler(struct amdgpu_device *adev)
 			adev->pm.ac_power = false;
 
 		if (adev->powerplay.pp_funcs &&
-		    adev->powerplay.pp_funcs->notify_ac_dc)
-			amdgpu_dpm_notify_ac_dc(adev);
+		    adev->powerplay.pp_funcs->enable_bapm)
+			amdgpu_dpm_enable_bapm(adev, adev->pm.ac_power);
 
 		if (is_support_sw_smu(adev))
-			smu_set_ac_dc(adev->powerplay.pp_handle, true);
+			smu_set_ac_dc(adev->powerplay.pp_handle);
 
 		mutex_unlock(&adev->pm.mutex);
 	}
@@ -1183,36 +1183,20 @@ int amdgpu_dpm_dispatch_task(struct amdgpu_device *adev,
 	return ret;
 }
 
-static bool amdgpu_dpm_is_pp_table_allowed(struct amdgpu_device *adev)
-{
-	return !amdgpu_sriov_vf(adev) &&
-	       !(adev->flags & AMD_IS_APU) &&
-	       !adev->scpm_enabled;
-}
-
-int amdgpu_dpm_get_pp_table(struct amdgpu_device *adev, char *table,
-			    size_t size)
+int amdgpu_dpm_get_pp_table(struct amdgpu_device *adev, char **table)
 {
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
-	char *pptable = NULL;
 	int ret = 0;
 
-	if ((!table && size) || (table && !size))
+	if (!table)
 		return -EINVAL;
 
-	if (!amdgpu_dpm_is_pp_table_allowed(adev) ||
-	    !pp_funcs->get_pp_table)
+	if (amdgpu_sriov_vf(adev) || !pp_funcs->get_pp_table || adev->scpm_enabled)
 		return -EOPNOTSUPP;
 
 	mutex_lock(&adev->pm.mutex);
 	ret = pp_funcs->get_pp_table(adev->powerplay.pp_handle,
-				     &pptable);
-	if (ret > 0 && !pptable) {
-		ret = -EINVAL;
-	} else if (ret > 0 && table) {
-		ret = min_t(size_t, ret, size);
-		memcpy(table, pptable, ret);
-	}
+				     table);
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
@@ -1442,23 +1426,17 @@ int amdgpu_dpm_set_power_profile_mode(struct amdgpu_device *adev,
 	return ret;
 }
 
-ssize_t amdgpu_dpm_get_gpu_metrics(struct amdgpu_device *adev, void *buf,
-				   size_t size)
+int amdgpu_dpm_get_gpu_metrics(struct amdgpu_device *adev, void **table)
 {
 	const struct amd_pm_funcs *pp_funcs = adev->powerplay.pp_funcs;
-	void *table;
-	ssize_t ret;
+	int ret = 0;
 
 	if (!pp_funcs->get_gpu_metrics)
 		return 0;
 
 	mutex_lock(&adev->pm.mutex);
 	ret = pp_funcs->get_gpu_metrics(adev->powerplay.pp_handle,
-					&table);
-	if (ret > 0) {
-		ret = min_t(ssize_t, ret, size);
-		memcpy(buf, table, ret);
-	}
+					table);
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
@@ -1725,8 +1703,7 @@ int amdgpu_dpm_set_pp_table(struct amdgpu_device *adev,
 	if (!buf || !size)
 		return -EINVAL;
 
-	if (!amdgpu_dpm_is_pp_table_allowed(adev) ||
-	    !pp_funcs->set_pp_table)
+	if (amdgpu_sriov_vf(adev) || !pp_funcs->set_pp_table || adev->scpm_enabled)
 		return -EOPNOTSUPP;
 
 	mutex_lock(&adev->pm.mutex);
@@ -2132,4 +2109,11 @@ ssize_t amdgpu_dpm_get_xcp_metrics(struct amdgpu_device *adev, int xcp_id,
 	mutex_unlock(&adev->pm.mutex);
 
 	return ret;
+}
+
+const struct ras_smu_drv *amdgpu_dpm_get_ras_smu_driver(struct amdgpu_device *adev)
+{
+	void *pp_handle = adev->powerplay.pp_handle;
+
+	return smu_get_ras_smu_driver(pp_handle);
 }

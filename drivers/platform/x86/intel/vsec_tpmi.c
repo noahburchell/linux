@@ -504,17 +504,24 @@ static ssize_t mem_write(struct file *file, const char __user *userbuf, size_t l
 	if (addr >= size)
 		return -EINVAL;
 
-	guard(mutex)(&tpmi_dev_lock);
+	mutex_lock(&tpmi_dev_lock);
 
 	mem = ioremap(pfs->vsec_offset + punit * size, size);
-	if (!mem)
-		return -ENOMEM;
+	if (!mem) {
+		ret = -ENOMEM;
+		goto unlock_mem_write;
+	}
 
 	writel(value, mem + addr);
 
 	iounmap(mem);
 
-	return len;
+	ret = len;
+
+unlock_mem_write:
+	mutex_unlock(&tpmi_dev_lock);
+
+	return ret;
 }
 
 static int mem_write_show(struct seq_file *s, void *unused)

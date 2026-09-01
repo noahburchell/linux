@@ -16,10 +16,10 @@
 #include <string.h>
 #include <unistd.h>
 #include <time.h>
+#include <include/vdso/time64.h>
 #include <pthread.h>
 #include <stdbool.h>
 
-#include "clock-helpers.h"
 #include "kselftest.h"
 
 #define DELAY 2
@@ -78,25 +78,19 @@ static void sig_handler(int nr)
 	done = 1;
 }
 
-static inline int64_t calcdiff_ns(struct timespec t1, struct timespec t2)
-{
-	int64_t diff;
-
-	diff = NSEC_PER_SEC * (int64_t)((int) t1.tv_sec - (int) t2.tv_sec);
-	diff += ((int) t1.tv_nsec - (int) t2.tv_nsec);
-	return diff;
-}
-
 /*
  * Check the expected timer expiration matches the GTOD elapsed delta since
  * we armed the timer. Keep a 0.5 sec error margin due to various jitter.
  */
-static int check_diff(struct timespec start, struct timespec end)
+static int check_diff(struct timeval start, struct timeval end)
 {
-	long long diff = calcdiff_ns(end, start);
+	long long diff;
 
-	if (llabs(diff - DELAY * NSEC_PER_SEC) > NSEC_PER_SEC / 2) {
-		printf("Diff too high: %lld ns..", diff);
+	diff = end.tv_usec - start.tv_usec;
+	diff += (end.tv_sec - start.tv_sec) * USEC_PER_SEC;
+
+	if (llabs(diff - DELAY * USEC_PER_SEC) > USEC_PER_SEC / 2) {
+		printf("Diff too high: %lld..", diff);
 		return -1;
 	}
 
@@ -105,25 +99,22 @@ static int check_diff(struct timespec start, struct timespec end)
 
 static void check_itimer(int which, const char *name)
 {
-	struct timespec start, end;
+	struct timeval start, end;
 	struct itimerval val = {
 		.it_value.tv_sec = DELAY,
 	};
-	int clock_id = CLOCK_REALTIME;
 
 	done = 0;
 
 	if (which == ITIMER_VIRTUAL)
 		signal(SIGVTALRM, sig_handler);
-	else if (which == ITIMER_PROF) {
-		clock_id = CLOCK_THREAD_CPUTIME_ID;
+	else if (which == ITIMER_PROF)
 		signal(SIGPROF, sig_handler);
-	}
 	else if (which == ITIMER_REAL)
 		signal(SIGALRM, sig_handler);
 
-	if (clock_gettime(clock_id, &start))
-		fatal_error(name, "clock_gettime()");
+	if (gettimeofday(&start, NULL) < 0)
+		fatal_error(name, "gettimeofday()");
 
 	if (setitimer(which, &val, NULL) < 0)
 		fatal_error(name, "setitimer()");
@@ -135,20 +126,18 @@ static void check_itimer(int which, const char *name)
 	else if (which == ITIMER_REAL)
 		idle_loop();
 
-	if (clock_gettime(clock_id, &end))
-		fatal_error(name, "clock_gettime()");
+	if (gettimeofday(&end, NULL) < 0)
+		fatal_error(name, "gettimeofday()");
 
 	ksft_test_result(check_diff(start, end) == 0, "%s\n", name);
 }
 
-static void check_timer_create(int which)
+static void check_timer_create(int which, const char *name)
 {
-	const char *name = clock_name(which);
-	struct timespec start, end;
+	struct timeval start, end;
 	struct itimerspec val = {
 		.it_value.tv_sec = DELAY,
 	};
-	int clock_id = CLOCK_REALTIME;
 	timer_t id;
 
 	done = 0;
@@ -159,16 +148,16 @@ static void check_timer_create(int which)
 	if (signal(SIGALRM, sig_handler) == SIG_ERR)
 		fatal_error(name, "signal()");
 
-	if (clock_gettime(clock_id, &start))
-		fatal_error(name, "clock_gettime()");
+	if (gettimeofday(&start, NULL) < 0)
+		fatal_error(name, "gettimeofday()");
 
 	if (timer_settime(id, 0, &val, NULL) < 0)
 		fatal_error(name, "timer_settime()");
 
 	user_loop();
 
-	if (clock_gettime(clock_id, &end))
-		fatal_error(name, "clock_gettime()");
+	if (gettimeofday(&end, NULL) < 0)
+		fatal_error(name, "gettimeofday()");
 
 	ksft_test_result(check_diff(start, end) == 0,
 			 "timer_create() per %s\n", name);
@@ -456,9 +445,17 @@ static void check_delete(void)
 	ksft_test_result(!tsig.signals, "check_delete\n");
 }
 
-static void check_sigev_none(int which)
+static inline int64_t calcdiff_ns(struct timespec t1, struct timespec t2)
 {
-	const char *name = clock_name(which);
+	int64_t diff;
+
+	diff = NSEC_PER_SEC * (int64_t)((int) t1.tv_sec - (int) t2.tv_sec);
+	diff += ((int) t1.tv_nsec - (int) t2.tv_nsec);
+	return diff;
+}
+
+static void check_sigev_none(int which, const char *name)
+{
 	struct timespec start, now;
 	struct itimerspec its;
 	struct sigevent sev;
@@ -495,9 +492,8 @@ static void check_sigev_none(int which)
 			 "check_sigev_none %s\n", name);
 }
 
-static void check_gettime(int which)
+static void check_gettime(int which, const char *name)
 {
-	const char *name = clock_name(which);
 	struct itimerspec its, prev;
 	struct timespec start, now;
 	struct sigevent sev;
@@ -549,9 +545,8 @@ static void check_gettime(int which)
 	ksft_test_result(wraps > 1, "check_gettime %s\n", name);
 }
 
-static void check_overrun(int which)
+static void check_overrun(int which, const char *name)
 {
-	const char *name = clock_name(which);
 	struct timespec start, now;
 	struct tmrsig tsig = { };
 	struct itimerspec its;
@@ -693,7 +688,7 @@ int main(int argc, char **argv)
 	check_itimer(ITIMER_VIRTUAL, "ITIMER_VIRTUAL");
 	check_itimer(ITIMER_PROF, "ITIMER_PROF");
 	check_itimer(ITIMER_REAL, "ITIMER_REAL");
-	check_timer_create(CLOCK_THREAD_CPUTIME_ID);
+	check_timer_create(CLOCK_THREAD_CPUTIME_ID, "CLOCK_THREAD_CPUTIME_ID");
 
 	/*
 	 * It's unfortunately hard to reliably test a timer expiration
@@ -704,7 +699,7 @@ int main(int argc, char **argv)
 	 * to ensure true parallelism. So test only one thread until we
 	 * find a better solution.
 	 */
-	check_timer_create(CLOCK_PROCESS_CPUTIME_ID);
+	check_timer_create(CLOCK_PROCESS_CPUTIME_ID, "CLOCK_PROCESS_CPUTIME_ID");
 	check_timer_distribution();
 
 	if (run_sig_ign_tests) {
@@ -712,18 +707,18 @@ int main(int argc, char **argv)
 		check_sig_ign(1);
 		check_rearm();
 		check_delete();
-		check_sigev_none(CLOCK_MONOTONIC);
-		check_sigev_none(CLOCK_PROCESS_CPUTIME_ID);
-		check_gettime(CLOCK_MONOTONIC);
-		check_gettime(CLOCK_PROCESS_CPUTIME_ID);
-		check_gettime(CLOCK_THREAD_CPUTIME_ID);
+		check_sigev_none(CLOCK_MONOTONIC, "CLOCK_MONOTONIC");
+		check_sigev_none(CLOCK_PROCESS_CPUTIME_ID, "CLOCK_PROCESS_CPUTIME_ID");
+		check_gettime(CLOCK_MONOTONIC, "CLOCK_MONOTONIC");
+		check_gettime(CLOCK_PROCESS_CPUTIME_ID, "CLOCK_PROCESS_CPUTIME_ID");
+		check_gettime(CLOCK_THREAD_CPUTIME_ID, "CLOCK_THREAD_CPUTIME_ID");
 	} else {
 		ksft_print_msg("Skipping SIG_IGN tests on kernel < 6.13\n");
 	}
 
-	check_overrun(CLOCK_MONOTONIC);
-	check_overrun(CLOCK_PROCESS_CPUTIME_ID);
-	check_overrun(CLOCK_THREAD_CPUTIME_ID);
+	check_overrun(CLOCK_MONOTONIC, "CLOCK_MONOTONIC");
+	check_overrun(CLOCK_PROCESS_CPUTIME_ID, "CLOCK_PROCESS_CPUTIME_ID");
+	check_overrun(CLOCK_THREAD_CPUTIME_ID, "CLOCK_THREAD_CPUTIME_ID");
 
 	ksft_finished();
 }

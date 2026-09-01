@@ -123,6 +123,7 @@ static int bng_re_process_qp_event(struct bng_re_rcfw *rcfw,
 	bool is_waiter_alive;
 	struct pci_dev *pdev;
 	u32 wait_cmds = 0;
+	int rc = 0;
 
 	pdev = rcfw->pdev;
 	switch (qp_event->event) {
@@ -151,7 +152,7 @@ static int bng_re_process_qp_event(struct bng_re_rcfw *rcfw,
 				 "rcfw timedout: cookie = %#x, free_slots = %d",
 				 cookie, crsqe->free_slots);
 			spin_unlock(&hwq->lock);
-			return 0;
+			return rc;
 		}
 
 		if (crsqe->is_waiter_alive) {
@@ -181,7 +182,7 @@ static int bng_re_process_qp_event(struct bng_re_rcfw *rcfw,
 		spin_unlock(&hwq->lock);
 	}
 	*num_wait += wait_cmds;
-	return 0;
+	return rc;
 }
 
 /* function events */
@@ -401,15 +402,14 @@ static int __wait_for_resp(struct bng_re_rcfw *rcfw, u16 cookie)
 {
 	struct bng_re_cmdq_ctx *cmdq;
 	struct bng_re_crsqe *crsqe;
-	unsigned long time_left;
 
 	cmdq = &rcfw->cmdq;
 	crsqe = &rcfw->crsqe_tbl[cookie];
 
 	do {
-		time_left = wait_event_timeout(cmdq->waitq,
-					       !crsqe->is_in_used,
-					       secs_to_jiffies(rcfw->max_timeout));
+		wait_event_timeout(cmdq->waitq,
+				   !crsqe->is_in_used,
+				   secs_to_jiffies(rcfw->max_timeout));
 
 		if (!crsqe->is_in_used)
 			return 0;
@@ -418,9 +418,6 @@ static int __wait_for_resp(struct bng_re_rcfw *rcfw, u16 cookie)
 
 		if (!crsqe->is_in_used)
 			return 0;
-
-		if (!time_left)
-			return -ENODEV;
 	} while (true);
 };
 

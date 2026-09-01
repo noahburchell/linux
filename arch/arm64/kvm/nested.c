@@ -16,7 +16,6 @@
 #include <asm/sysreg.h>
 
 #include "sys_regs.h"
-#include "vgic/vgic.h"
 
 struct vncr_tlb {
 	/* The guest's VNCR_EL2 */
@@ -28,7 +27,7 @@ struct vncr_tlb {
 	bool			hpa_writable;
 
 	/* -1 when not mapped on a CPU */
-	atomic_t		cpu;
+	int			cpu;
 
 	/*
 	 * true if the TLB is valid. Can only be changed with the
@@ -49,7 +48,7 @@ void kvm_init_nested(struct kvm *kvm)
 {
 	kvm->arch.nested_mmus = NULL;
 	kvm->arch.nested_mmus_size = 0;
-	atomic_set(&kvm->arch.vncr_tlb_count, 0);
+	atomic_set(&kvm->arch.vncr_map_count, 0);
 }
 
 static int init_nested_s2_mmu(struct kvm *kvm, struct kvm_s2_mmu *mmu)
@@ -361,13 +360,8 @@ static int walk_nested_s2_pgd(struct kvm_vcpu *vcpu, phys_addr_t ipa,
 
 	if (new_desc != desc) {
 		ret = swap_guest_s2_desc(vcpu, paddr, desc, new_desc, wi);
-		if (ret == -EAGAIN)
+		if (ret)
 			return ret;
-		if (ret) {
-			out->esr = ESR_ELx_FSC_SEA_TTW(level);
-			out->desc = desc;
-			return 1;
-		}
 
 		desc = new_desc;
 	}
@@ -392,104 +386,32 @@ static int walk_nested_s2_pgd(struct kvm_vcpu *vcpu, phys_addr_t ipa,
 	return 0;
 }
 
-#define _has_tgran_2(__r, __sz)						\
-	({								\
-		u64 _s1, _s2, _mmfr0 = __r;				\
-									\
-		_s2 = SYS_FIELD_GET(ID_AA64MMFR0_EL1,			\
-				    TGRAN##__sz##_2, _mmfr0);		\
-									\
-		_s1 = SYS_FIELD_GET(ID_AA64MMFR0_EL1,			\
-				    TGRAN##__sz, _mmfr0);		\
-									\
-		((_s2 != ID_AA64MMFR0_EL1_TGRAN##__sz##_2_NI &&		\
-		  _s2 != ID_AA64MMFR0_EL1_TGRAN##__sz##_2_TGRAN##__sz) || \
-		 (_s2 == ID_AA64MMFR0_EL1_TGRAN##__sz##_2_TGRAN##__sz && \
-		  _s1 != ID_AA64MMFR0_EL1_TGRAN##__sz##_NI));		\
-	})
-
-static bool has_tgran_2(u64 mmfr0, unsigned int shift)
+static void vtcr_to_walk_info(u64 vtcr, struct s2_walk_info *wi)
 {
-	switch (shift) {
-	case 12:
-		return _has_tgran_2(mmfr0, 4);
-	case 14:
-		return _has_tgran_2(mmfr0, 16);
-	case 16:
-		return _has_tgran_2(mmfr0, 64);
-	default:
-		BUG();
-	}
-}
+	wi->t0sz = vtcr & TCR_EL2_T0SZ_MASK;
 
-static unsigned int fallback_tgran2_shift(u64 mmfr0)
-{
-	if (has_tgran_2(mmfr0, PAGE_SHIFT))
-		return PAGE_SHIFT;
-	else if (has_tgran_2(mmfr0, 12))
-		return 12;
-	else if (has_tgran_2(mmfr0, 14))
-		return 14;
-	else if (has_tgran_2(mmfr0, 16))
-		return 16;
-	else
-		return PAGE_SHIFT;
-}
-
-static unsigned int vtcr_to_tg0_pgshift(struct kvm *kvm, u64 vtcr)
-{
-	u64 tg0 = FIELD_GET(VTCR_EL2_TG0_MASK, vtcr);
-	u64 mmfr0 = kvm_read_vm_id_reg(kvm, SYS_ID_AA64MMFR0_EL1);
-	unsigned int shift;
-
-	switch (tg0) {
+	switch (FIELD_GET(VTCR_EL2_TG0_MASK, vtcr)) {
 	case VTCR_EL2_TG0_4K:
-		shift = 12;
-		break;
+		wi->pgshift = 12;	 break;
 	case VTCR_EL2_TG0_16K:
-		shift = 14;
-		break;
+		wi->pgshift = 14;	 break;
 	case VTCR_EL2_TG0_64K:
-	/* IMPDEF: treat any other value as 64k, subject to fallback */
-	default:
-		shift = 16;
+	default:	    /* IMPDEF: treat any other value as 64k */
+		wi->pgshift = 16;	 break;
 	}
 
-	/*
-	 * If TGx is programmed to an unimplemented value (not advertised in
-	 * ID_AA64MMFR0_EL1), we should treat it as if an implemented value is
-	 * written, as per the architecture. Choose an available one while
-	 * prioritizing PAGE_SIZE.
-	 */
-	if (!has_tgran_2(mmfr0, shift))
-		return fallback_tgran2_shift(mmfr0);
-
-	return shift;
-}
-
-static size_t vtcr_to_tg0_pgsize(struct kvm *kvm, u64 vtcr)
-{
-	return BIT(vtcr_to_tg0_pgshift(kvm, vtcr));
-}
-
-static void setup_s2_walk(struct kvm_vcpu *vcpu, struct s2_walk_info *wi)
-{
-	u64 vtcr = vcpu_read_sys_reg(vcpu, VTCR_EL2);
-
-	wi->baddr = vcpu_read_sys_reg(vcpu, VTTBR_EL2);
-	wi->t0sz = vtcr & VTCR_EL2_T0SZ_MASK;
-	wi->pgshift = vtcr_to_tg0_pgshift(vcpu->kvm, vtcr);
 	wi->sl = FIELD_GET(VTCR_EL2_SL0_MASK, vtcr);
 	/* Global limit for now, should eventually be per-VM */
 	wi->max_oa_bits = min(get_kvm_ipa_limit(),
 			      ps_to_output_size(FIELD_GET(VTCR_EL2_PS_MASK, vtcr), false));
+
 	wi->ha = vtcr & VTCR_EL2_HA;
-	wi->be = vcpu_read_sys_reg(vcpu, SCTLR_EL2) & SCTLR_ELx_EE;
 }
 
 int kvm_walk_nested_s2(struct kvm_vcpu *vcpu, phys_addr_t gipa,
 		       struct kvm_s2_trans *result)
 {
+	u64 vtcr = vcpu_read_sys_reg(vcpu, VTCR_EL2);
 	struct s2_walk_info wi;
 	int ret;
 
@@ -498,7 +420,11 @@ int kvm_walk_nested_s2(struct kvm_vcpu *vcpu, phys_addr_t gipa,
 	if (!vcpu_has_nv(vcpu))
 		return 0;
 
-	setup_s2_walk(vcpu, &wi);
+	wi.baddr = vcpu_read_sys_reg(vcpu, VTTBR_EL2);
+
+	vtcr_to_walk_info(vtcr, &wi);
+
+	wi.be = vcpu_read_sys_reg(vcpu, SCTLR_EL2) & SCTLR_ELx_EE;
 
 	ret = walk_nested_s2_pgd(vcpu, gipa, &wi, result);
 	if (ret)
@@ -507,7 +433,7 @@ int kvm_walk_nested_s2(struct kvm_vcpu *vcpu, phys_addr_t gipa,
 	return ret;
 }
 
-static unsigned int __ttl_to_size(u8 ttl)
+static unsigned int ttl_to_size(u8 ttl)
 {
 	int level = ttl & 3;
 	int gran = (ttl >> 2) & 3;
@@ -563,21 +489,9 @@ static unsigned int __ttl_to_size(u8 ttl)
 	return max_size;
 }
 
-static unsigned int ttl_to_size(u8 ttl)
-{
-	return __ttl_to_size(ttl) ?: SZ_1G;
-}
-
-static u8 pgshift_level_to_ttl(u16 shift, s8 level)
+static u8 pgshift_level_to_ttl(u16 shift, u8 level)
 {
 	u8 ttl;
-
-	/*
-	 * If we don't have a proper level, fallback to the maximum
-	 * size.
-	 */
-	if (level < 0)
-		return 0;
 
 	switch(shift) {
 	case 12:
@@ -606,21 +520,20 @@ static u8 pgshift_level_to_ttl(u16 shift, s8 level)
  */
 static u8 get_guest_mapping_ttl(struct kvm_s2_mmu *mmu, u64 addr)
 {
-	size_t tg0_size = vtcr_to_tg0_pgsize(kvm_s2_mmu_to_kvm(mmu), mmu->tlb_vtcr);
-	u64 tmp, sz = 0;
+	u64 tmp, sz = 0, vtcr = mmu->tlb_vtcr;
 	kvm_pte_t pte;
 	u8 ttl, level;
 
 	lockdep_assert_held_write(&kvm_s2_mmu_to_kvm(mmu)->mmu_lock);
 
-	switch (tg0_size) {
-	case SZ_4K:
+	switch (FIELD_GET(VTCR_EL2_TG0_MASK, vtcr)) {
+	case VTCR_EL2_TG0_4K:
 		ttl = (TLBI_TTL_TG_4K << 2);
 		break;
-	case SZ_16K:
+	case VTCR_EL2_TG0_16K:
 		ttl = (TLBI_TTL_TG_16K << 2);
 		break;
-	case SZ_64K:
+	case VTCR_EL2_TG0_64K:
 	default:	    /* IMPDEF: treat any other value as 64k */
 		ttl = (TLBI_TTL_TG_64K << 2);
 		break;
@@ -630,19 +543,19 @@ static u8 get_guest_mapping_ttl(struct kvm_s2_mmu *mmu, u64 addr)
 
 again:
 	/* Iteratively compute the block sizes for a particular granule size */
-	switch (tg0_size) {
-	case SZ_4K:
+	switch (FIELD_GET(VTCR_EL2_TG0_MASK, vtcr)) {
+	case VTCR_EL2_TG0_4K:
 		if	(sz < SZ_4K)	sz = SZ_4K;
 		else if (sz < SZ_2M)	sz = SZ_2M;
 		else if (sz < SZ_1G)	sz = SZ_1G;
 		else			sz = 0;
 		break;
-	case SZ_16K:
+	case VTCR_EL2_TG0_16K:
 		if	(sz < SZ_16K)	sz = SZ_16K;
 		else if (sz < SZ_32M)	sz = SZ_32M;
 		else			sz = 0;
 		break;
-	case SZ_64K:
+	case VTCR_EL2_TG0_64K:
 	default:	    /* IMPDEF: treat any other value as 64k */
 		if	(sz < SZ_64K)	sz = SZ_64K;
 		else if (sz < SZ_512M)	sz = SZ_512M;
@@ -689,22 +602,18 @@ unsigned long compute_tlb_inval_range(struct kvm_s2_mmu *mmu, u64 val)
 		ttl = get_guest_mapping_ttl(mmu, addr);
 	}
 
-	/*
-	 * Don't use the default 1GB fallback, as we can adapt to the
-	 * max mapping size we allow at S2.
-	 */
-	max_size = __ttl_to_size(ttl);
+	max_size = ttl_to_size(ttl);
 
 	if (!max_size) {
 		/* Compute the maximum extent of the invalidation */
-		switch (vtcr_to_tg0_pgsize(kvm, mmu->tlb_vtcr)) {
-		case SZ_4K:
+		switch (FIELD_GET(VTCR_EL2_TG0_MASK, mmu->tlb_vtcr)) {
+		case VTCR_EL2_TG0_4K:
 			max_size = SZ_1G;
 			break;
-		case SZ_16K:
+		case VTCR_EL2_TG0_16K:
 			max_size = SZ_32M;
 			break;
-		case SZ_64K:
+		case VTCR_EL2_TG0_64K:
 		default:    /* IMPDEF: treat any other value as 64k */
 			/*
 			 * No, we do not support 52bit IPA in nested yet. Once
@@ -896,47 +805,18 @@ void kvm_vcpu_load_hw_mmu(struct kvm_vcpu *vcpu)
 	}
 }
 
-/*
- * Unmapping an L1 VNCR can happen concurrently without the mmu lock being
- * effective (vcpu_put() vs TLBI handling). The atomic_xchg below ensures
- * that only one CPU sets it to -1 while getting a valid CPU number back.
- */
-static int unmap_l1_vncr(struct vncr_tlb *vt)
-{
-	int cpu = atomic_xchg_relaxed(&vt->cpu, -1);
-
-	if (cpu != -1)
-		clear_fixmap(vncr_fixmap(cpu));
-
-	return cpu;
-}
-
-static void this_cpu_reset_vncr_fixmap(struct kvm_vcpu *vcpu)
-{
-	if (!host_data_test_flag(L1_VNCR_MAPPED))
-		return;
-
-	BUG_ON(is_hyp_ctxt(vcpu));
-
-	/*
-	 * Unconditionally unmap the local VNCR if we have lost the race
-	 * against a concurrent TLBI. Otherwise we could end-up running
-	 * another vcpu with VNCR still mapped if the TLBI thread is
-	 * preempted between the exchange and the clear_fixmap().
-	 *
-	 * Note that we do not care about the TLBI nuking the fixmap behind
-	 * the back of an running vcpu. This will only generate a fault and
-	 * possibly a retranslation.
-	 */
-	if (unmap_l1_vncr(vcpu->arch.vncr_tlb) == -1)
-		clear_fixmap(vncr_fixmap(smp_processor_id()));
-	host_data_clear_flag(L1_VNCR_MAPPED);
-}
-
 void kvm_vcpu_put_hw_mmu(struct kvm_vcpu *vcpu)
 {
 	/* Unconditionally drop the VNCR mapping if we have one */
-	this_cpu_reset_vncr_fixmap(vcpu);
+	if (host_data_test_flag(L1_VNCR_MAPPED)) {
+		BUG_ON(vcpu->arch.vncr_tlb->cpu != smp_processor_id());
+		BUG_ON(is_hyp_ctxt(vcpu));
+
+		clear_fixmap(vncr_fixmap(vcpu->arch.vncr_tlb->cpu));
+		vcpu->arch.vncr_tlb->cpu = -1;
+		host_data_clear_flag(L1_VNCR_MAPPED);
+		atomic_dec(&vcpu->kvm->arch.vncr_map_count);
+	}
 
 	/*
 	 * Keep a reference on the associated stage-2 MMU if the vCPU is
@@ -1018,26 +898,11 @@ u16 get_asid_by_regime(struct kvm_vcpu *vcpu, enum trans_regime regime)
 	return asid;
 }
 
-static void invalidate_vncr(struct kvm *kvm, struct vncr_tlb *vt)
+static void invalidate_vncr(struct vncr_tlb *vt)
 {
-	BUG_ON(!vt->valid);
 	vt->valid = false;
-	unmap_l1_vncr(vt);
-	atomic_dec(&kvm->arch.vncr_tlb_count);
-}
-
-static bool vncr_tlb_intersects(struct vncr_tlb *vt, u64 addr,
-				u64 scope_start, u64 scope_size)
-{
-	u64 tlb_size, tlb_start, tlb_end, scope_end;
-
-	tlb_size = ttl_to_size(pgshift_level_to_ttl(vt->wi.pgshift, vt->wr.level));
-
-	tlb_start = addr & ~(tlb_size - 1);
-	tlb_end = tlb_start + tlb_size - 1;
-	scope_end = scope_start + scope_size - 1;
-
-	return !(tlb_end < scope_start || tlb_start > scope_end);
+	if (vt->cpu != -1)
+		clear_fixmap(vncr_fixmap(vt->cpu));
 }
 
 /*
@@ -1062,15 +927,19 @@ static void kvm_invalidate_vncr_ipa(struct kvm *kvm, u64 start, u64 end)
 	if (!kvm_has_feat(kvm, ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY))
 		return;
 
-	/*
-	 * Note that invalidating the VNCR on the back of an MMU notifier
-	 * doesn't require messing with the invalidation counter for a
-	 * parallel walk. The notifier itself will have bumped the counter,
-	 * making sure we rewalk.
-	 */
-	kvm_for_each_vncr_tlb(i, vcpu, vt, kvm)
-		if (vncr_tlb_intersects(vt, vt->wr.pa, start, end - start))
-			invalidate_vncr(kvm, vt);
+	kvm_for_each_vncr_tlb(i, vcpu, vt, kvm) {
+		u64 ipa_start, ipa_end, ipa_size;
+
+		ipa_size = ttl_to_size(pgshift_level_to_ttl(vt->wi.pgshift,
+							    vt->wr.level));
+		ipa_start = vt->wr.pa & ~(ipa_size - 1);
+		ipa_end = ipa_start + ipa_size;
+
+		if (ipa_end <= start || ipa_start >= end)
+			continue;
+
+		invalidate_vncr(vt);
+	}
 }
 
 struct s1e2_tlbi_scope {
@@ -1095,29 +964,29 @@ static void invalidate_vncr_va(struct kvm *kvm,
 
 	lockdep_assert_held_write(&kvm->mmu_lock);
 
-	/*
-	 * We might be performing a parallel S1 walk, so bump up the
-	 * invalidation counter even in the absence of an actual VNCR TLB
-	 * invalidation, as this could indicate that the guest has gone
-	 * through a BBM sequence.
-	 */
-	kvm->mmu_invalidate_seq++;
-	smp_wmb();
-
 	kvm_for_each_vncr_tlb(i, vcpu, vt, kvm) {
+		u64 va_start, va_end, va_size;
+
+		va_size = ttl_to_size(pgshift_level_to_ttl(vt->wi.pgshift,
+							   vt->wr.level));
+		va_start = vt->gva & ~(va_size - 1);
+		va_end = va_start + va_size;
+
 		switch (scope->type) {
 		case TLBI_ALL:
 			break;
 
 		case TLBI_VA:
-			if (!vncr_tlb_intersects(vt, vt->gva, scope->va, scope->size))
+			if (va_end <= scope->va ||
+			    va_start >= (scope->va + scope->size))
 				continue;
 			if (vt->wr.nG && vt->wr.asid != scope->asid)
 				continue;
 			break;
 
 		case TLBI_VAA:
-			if (!vncr_tlb_intersects(vt, vt->gva, scope->va, scope->size))
+			if (va_end <= scope->va ||
+			    va_start >= (scope->va + scope->size))
 				continue;
 			break;
 
@@ -1127,7 +996,7 @@ static void invalidate_vncr_va(struct kvm *kvm,
 			break;
 		}
 
-		invalidate_vncr(kvm, vt);
+		invalidate_vncr(vt);
 	}
 }
 
@@ -1177,6 +1046,8 @@ static void compute_s1_tlbi_range(struct kvm_vcpu *vcpu, u32 inst, u64 val,
 	case OP_TLBI_VALE1OSNXS:
 		scope->type = TLBI_VA;
 		scope->size = ttl_to_size(FIELD_GET(TLBI_TTL_MASK, val));
+		if (!scope->size)
+			scope->size = SZ_1G;
 		scope->va = tlbi_va_s1_to_va(val) & ~(scope->size - 1);
 		scope->asid = FIELD_GET(TLBIR_ASID_MASK, val);
 		break;
@@ -1203,6 +1074,8 @@ static void compute_s1_tlbi_range(struct kvm_vcpu *vcpu, u32 inst, u64 val,
 	case OP_TLBI_VAALE1OSNXS:
 		scope->type = TLBI_VAA;
 		scope->size = ttl_to_size(FIELD_GET(TLBI_TTL_MASK, val));
+		if (!scope->size)
+			scope->size = SZ_1G;
 		scope->va = tlbi_va_s1_to_va(val) & ~(scope->size - 1);
 		break;
 	case OP_TLBI_RVAE2:
@@ -1363,20 +1236,13 @@ void kvm_arch_flush_shadow_all(struct kvm *kvm)
  *   intersects with the TLBI request, invalidate it, and unmap the page
  *   from the fixmap. Because we need to look at all the vcpu-private TLBs,
  *   this requires some wide-ranging locking to ensure that nothing races
- *   against it. This requires some refcounting to avoid the search when
- *   no such TLB is present (see below).
+ *   against it. This may require some refcounting to avoid the search when
+ *   no such TLB is present.
  *
  * - On MMU notifiers, we must invalidate our TLB in a similar way, but
  *   looking at the IPA instead. The funny part is that there may not be a
  *   stage-2 mapping for this page if L1 hasn't accessed it using LD/ST
  *   instructions.
- *
- * - vncr_tlb_count tracks the number of valid VNCR TLBs VM-wide. This isn't
- *   the number of *mapped* L1 VNCR pages, which is likely be a subset (and
- *   by definition, a TLBI handled from L1 runs with the canonical VNCR
- *   page, not the L1's). The innermost trap handling code checks this to
- *   find out whether to return to the guest ASAP (no L1 TLBs) or to visit
- *   this part of the world for some extra invalidation work.
  */
 
 int kvm_vcpu_allocate_vncr_tlb(struct kvm_vcpu *vcpu)
@@ -1384,20 +1250,8 @@ int kvm_vcpu_allocate_vncr_tlb(struct kvm_vcpu *vcpu)
 	if (!kvm_has_feat(vcpu->kvm, ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY))
 		return 0;
 
-	if (!vcpu->arch.vncr_tlb) {
-		struct vncr_tlb *vt = kzalloc_obj(*vcpu->arch.vncr_tlb,
-						  GFP_KERNEL_ACCOUNT);
-
-		/*
-		 * Taking the lock on assignment ensures that the TLB is
-		 * seen as initialised when following the pointer (release
-		 * semantics of the unlock), and avoids having acquires on
-		 * each user which already take the lock.
-		 */
-		scoped_guard(write_lock, &vcpu->kvm->mmu_lock)
-			vcpu->arch.vncr_tlb = vt;
-	}
-
+	vcpu->arch.vncr_tlb = kzalloc_obj(*vcpu->arch.vncr_tlb,
+					  GFP_KERNEL_ACCOUNT);
 	if (!vcpu->arch.vncr_tlb)
 		return -ENOMEM;
 
@@ -1430,9 +1284,7 @@ static int kvm_translate_vncr(struct kvm_vcpu *vcpu, bool *is_gmem)
 	 * We also prepare the next walk wilst we're at it.
 	 */
 	scoped_guard(write_lock, &vcpu->kvm->mmu_lock) {
-		this_cpu_reset_vncr_fixmap(vcpu);
-		if (vt->valid)
-			invalidate_vncr(vcpu->kvm, vt);
+		invalidate_vncr(vt);
 
 		vt->wi = (struct s1_walk_info) {
 			.regime	= TR_EL20,
@@ -1446,14 +1298,14 @@ static int kvm_translate_vncr(struct kvm_vcpu *vcpu, bool *is_gmem)
 
 	va =  read_vncr_el2(vcpu);
 
-	mmu_seq = vcpu->kvm->mmu_invalidate_seq;
-	smp_rmb();
-
 	ret = __kvm_translate_va(vcpu, &vt->wi, &vt->wr, va);
 	if (ret)
 		return ret;
 
 	write_fault = kvm_is_write_fault(vcpu);
+
+	mmu_seq = vcpu->kvm->mmu_invalidate_seq;
+	smp_rmb();
 
 	gfn = vt->wr.pa >> PAGE_SHIFT;
 	memslot = gfn_to_memslot(vcpu->kvm, gfn);
@@ -1502,7 +1354,7 @@ static int kvm_translate_vncr(struct kvm_vcpu *vcpu, bool *is_gmem)
 		vt->hpa = pfn << PAGE_SHIFT;
 		vt->hpa_writable = writable;
 		vt->valid = true;
-		atomic_set(&vt->cpu, -1);
+		vt->cpu = -1;
 
 		kvm_make_request(KVM_REQ_MAP_L1_VNCR_EL2, vcpu);
 		kvm_release_faultin_page(vcpu->kvm, page, false, vt->wr.pw && vt->hpa_writable);
@@ -1553,24 +1405,11 @@ int kvm_handle_vncr_abort(struct kvm_vcpu *vcpu)
 		return kvm_handle_guest_sea(vcpu);
 
 	if (!esr_fsc_is_translation_fault(esr) && !esr_fsc_is_permission_fault(esr)) {
-		KVM_BUG(1, vcpu->kvm, "Unhandled VNCR abort, ESR=%llx\n", esr);
-		return -EIO;
+		WARN_ONCE(1, "Unhandled VNCR abort, ESR=%llx\n", esr);
+		return 1;
 	}
-
-	/*
-	 * Speculatively increment the TLB count to make sure concurrent
-	 * TLBIs will take the slow path, and will interact with the retry
-	 * mechanism. Drop it again on error.
-	 */
-	atomic_inc(&vcpu->kvm->arch.vncr_tlb_count);
-	smp_mb__after_atomic();
 
 	ret = kvm_translate_vncr(vcpu, &is_gmem);
-	if (ret) {
-		smp_mb__before_atomic();
-		atomic_dec(&vcpu->kvm->arch.vncr_tlb_count);
-	}
-
 	switch (ret) {
 	case -EAGAIN:
 		/* Let's try again... */
@@ -1636,15 +1475,13 @@ static void kvm_map_l1_vncr(struct kvm_vcpu *vcpu)
 	if (!vt->valid)
 		return;
 
-	/* We cache the MMU state in the TLB. Check that it matches. */
-	if (!!(vcpu_read_sys_reg(vcpu, SCTLR_EL2) & SCTLR_ELx_M) != s1_walk_translated(&vt->wr))
-		return;
-
 	if (read_vncr_el2(vcpu) != vt->gva)
 		return;
 
 	if (vt->wr.nG && get_asid_by_regime(vcpu, TR_EL20) != vt->wr.asid)
 		return;
+
+	vt->cpu = smp_processor_id();
 
 	if (vt->hpa_writable && vt->wr.pw && vt->wr.pr)
 		prot = PAGE_KERNEL;
@@ -1660,12 +1497,27 @@ static void kvm_map_l1_vncr(struct kvm_vcpu *vcpu)
 	 * FIXME: WO doesn't work at all, need POE support in the kernel.
 	 */
 	if (pgprot_val(prot) != pgprot_val(PAGE_NONE)) {
-		atomic_set(&vt->cpu, smp_processor_id());
-		__set_fixmap(vncr_fixmap(atomic_read(&vt->cpu)), vt->hpa, prot);
+		__set_fixmap(vncr_fixmap(vt->cpu), vt->hpa, prot);
 		host_data_set_flag(L1_VNCR_MAPPED);
+		atomic_inc(&vcpu->kvm->arch.vncr_map_count);
 	}
 }
 
+#define has_tgran_2(__r, __sz)						\
+	({								\
+		u64 _s1, _s2, _mmfr0 = __r;				\
+									\
+		_s2 = SYS_FIELD_GET(ID_AA64MMFR0_EL1,			\
+				    TGRAN##__sz##_2, _mmfr0);		\
+									\
+		_s1 = SYS_FIELD_GET(ID_AA64MMFR0_EL1,			\
+				    TGRAN##__sz, _mmfr0);		\
+									\
+		((_s2 != ID_AA64MMFR0_EL1_TGRAN##__sz##_2_NI &&		\
+		  _s2 != ID_AA64MMFR0_EL1_TGRAN##__sz##_2_TGRAN##__sz) || \
+		 (_s2 == ID_AA64MMFR0_EL1_TGRAN##__sz##_2_TGRAN##__sz && \
+		  _s1 != ID_AA64MMFR0_EL1_TGRAN##__sz##_NI));		\
+	})
 /*
  * Our emulated CPU doesn't support all the possible features. For the
  * sake of simplicity (and probably mental sanity), wipe out a number
@@ -1752,15 +1604,15 @@ u64 limit_nv_id_reg(struct kvm *kvm, u32 reg, u64 val)
 		 */
 		switch (PAGE_SIZE) {
 		case SZ_4K:
-			if (_has_tgran_2(orig_val, 4))
+			if (has_tgran_2(orig_val, 4))
 				val |= SYS_FIELD_PREP_ENUM(ID_AA64MMFR0_EL1, TGRAN4_2, IMP);
 			fallthrough;
 		case SZ_16K:
-			if (_has_tgran_2(orig_val, 16))
+			if (has_tgran_2(orig_val, 16))
 				val |= SYS_FIELD_PREP_ENUM(ID_AA64MMFR0_EL1, TGRAN16_2, IMP);
 			fallthrough;
 		case SZ_64K:
-			if (_has_tgran_2(orig_val, 64))
+			if (has_tgran_2(orig_val, 64))
 				val |= SYS_FIELD_PREP_ENUM(ID_AA64MMFR0_EL1, TGRAN64_2, IMP);
 			break;
 		}
@@ -1798,7 +1650,7 @@ u64 limit_nv_id_reg(struct kvm *kvm, u32 reg, u64 val)
 		 * You get EITHER
 		 *
 		 * - FEAT_VHE without FEAT_E2H0
-		 * - FEAT_NV limited to FEAT_NV2(p1)/NV3
+		 * - FEAT_NV limited to FEAT_NV2
 		 * - HCR_EL2.NV1 being RES0
 		 *
 		 * OR
@@ -1810,13 +1662,7 @@ u64 limit_nv_id_reg(struct kvm *kvm, u32 reg, u64 val)
 		if (test_bit(KVM_ARM_VCPU_HAS_EL2_E2H0, kvm->arch.vcpu_features)) {
 			val = 0;
 		} else {
-			val &= ID_AA64MMFR4_EL1_NV_frac;
-			if (cpus_have_final_cap(ARM64_HAS_NV3))
-				val = ID_REG_LIMIT_FIELD_ENUM(val, ID_AA64MMFR4_EL1, NV_frac, NV3);
-			else if (cpus_have_final_cap(ARM64_HAS_NV2P1))
-				val = ID_REG_LIMIT_FIELD_ENUM(val, ID_AA64MMFR4_EL1, NV_frac, NV2P1);
-			else
-				val = SYS_FIELD_PREP_ENUM(ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY);
+			val = SYS_FIELD_PREP_ENUM(ID_AA64MMFR4_EL1, NV_frac, NV2_ONLY);
 			val |= SYS_FIELD_PREP_ENUM(ID_AA64MMFR4_EL1, E2H0, NI_NV1);
 		}
 		break;
@@ -1902,10 +1748,6 @@ int kvm_init_nv_sysregs(struct kvm_vcpu *vcpu)
 	resx = get_reg_fixed_bits(kvm, HCR_EL2);
 	set_sysreg_masks(kvm, HCR_EL2, resx);
 
-	/* NVHCR_EL2 */
-	resx = get_reg_fixed_bits(kvm, NVHCR_EL2);
-	set_sysreg_masks(kvm, NVHCR_EL2, resx);
-
 	/* HCRX_EL2 */
 	resx = get_reg_fixed_bits(kvm, HCRX_EL2);
 	set_sysreg_masks(kvm, HCRX_EL2, resx);
@@ -1986,7 +1828,7 @@ int kvm_init_nv_sysregs(struct kvm_vcpu *vcpu)
 	/* ICH_HCR_EL2 */
 	resx.res0 = ICH_HCR_EL2_RES0;
 	resx.res1 = ICH_HCR_EL2_RES1;
-	if (!(vgic_ich_vtr() & ICH_VTR_EL2_TDS))
+	if (!(kvm_vgic_global_state.ich_vtr_el2 & ICH_VTR_EL2_TDS))
 		resx.res0 |= ICH_HCR_EL2_TDIR;
 	/* No GICv4 is presented to the guest */
 	resx.res0 |= ICH_HCR_EL2_DVIM | ICH_HCR_EL2_vSGIEOICount;

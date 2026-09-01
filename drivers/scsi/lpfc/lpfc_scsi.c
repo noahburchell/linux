@@ -21,7 +21,6 @@
  * included with this package.                                     *
  *******************************************************************/
 #include <linux/pci.h>
-#include <linux/seq_buf.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/export.h>
@@ -2498,7 +2497,7 @@ lpfc_bg_scsi_adjust_dl(struct lpfc_hba *phba,
 
 	/*
 	 * If we are in DIF Type 1 mode every data block has a 8 byte
-	 * DIF (trailer) attached to it. Must adjust FCP data length
+	 * DIF (trailer) attached to it. Must ajust FCP data length
 	 * to account for the protection data.
 	 */
 	fcpdl += (fcpdl / scsi_prot_interval(sc)) * 8;
@@ -2597,7 +2596,7 @@ lpfc_bg_scsi_prep_dma_buf_s3(struct lpfc_hba *phba,
 			lpfc_cmd->prot_seg_cnt = protsegcnt;
 
 			/*
-			 * There is a minimum of 4 BPLs used for every
+			 * There is a minimun of 4 BPLs used for every
 			 * protection data segment.
 			 */
 			if ((lpfc_cmd->prot_seg_cnt * 4) >
@@ -2679,7 +2678,7 @@ err:
 
 /*
  * This function calcuates the T10 DIF guard tag
- * on the specified data using a CRC algorithm
+ * on the specified data using a CRC algorithmn
  * using crc_t10dif.
  */
 static uint16_t
@@ -2695,7 +2694,7 @@ lpfc_bg_crc(uint8_t *data, int count)
 
 /*
  * This function calcuates the T10 DIF guard tag
- * on the specified data using a CSUM algorithm
+ * on the specified data using a CSUM algorithmn
  * using ip_compute_csum.
  */
 static uint16_t
@@ -3379,7 +3378,7 @@ lpfc_bg_scsi_prep_dma_buf_s4(struct lpfc_hba *phba,
 
 			lpfc_cmd->prot_seg_cnt = protsegcnt;
 			/*
-			 * There is a minimum of 3 SGEs used for every
+			 * There is a minimun of 3 SGEs used for every
 			 * protection data segment.
 			 */
 			if (((lpfc_cmd->prot_seg_cnt * 3) >
@@ -5104,37 +5103,57 @@ lpfc_info(struct Scsi_Host *host)
 	struct lpfc_hba   *phba = vport->phba;
 	int link_speed = 0;
 	static char lpfcinfobuf[384];
-	struct seq_buf s;
+	char tmp[384] = {0};
 
 	memset(lpfcinfobuf, 0, sizeof(lpfcinfobuf));
-	seq_buf_init(&s, lpfcinfobuf, sizeof(lpfcinfobuf));
 	if (phba && phba->pcidev){
 		/* Model Description */
-		seq_buf_printf(&s, "%s", phba->ModelDesc);
+		scnprintf(tmp, sizeof(tmp), phba->ModelDesc);
+		if (strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf)) >=
+		    sizeof(lpfcinfobuf))
+			goto buffer_done;
 
 		/* PCI Info */
-		seq_buf_printf(&s, " on PCI bus %02x device %02x irq %d",
-			       phba->pcidev->bus->number, phba->pcidev->devfn,
-			       phba->pcidev->irq);
+		scnprintf(tmp, sizeof(tmp),
+			  " on PCI bus %02x device %02x irq %d",
+			  phba->pcidev->bus->number, phba->pcidev->devfn,
+			  phba->pcidev->irq);
+		if (strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf)) >=
+		    sizeof(lpfcinfobuf))
+			goto buffer_done;
 
 		/* Port Number */
-		if (phba->Port[0])
-			seq_buf_printf(&s, " port %s", phba->Port);
+		if (phba->Port[0]) {
+			scnprintf(tmp, sizeof(tmp), " port %s", phba->Port);
+			if (strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf)) >=
+			    sizeof(lpfcinfobuf))
+				goto buffer_done;
+		}
 
 		/* Link Speed */
 		link_speed = lpfc_sli_port_speed_get(phba);
-		if (link_speed != 0)
-			seq_buf_printf(&s, " Logical Link Speed: %d Mbps",
-				       link_speed);
+		if (link_speed != 0) {
+			scnprintf(tmp, sizeof(tmp),
+				  " Logical Link Speed: %d Mbps", link_speed);
+			if (strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf)) >=
+			    sizeof(lpfcinfobuf))
+				goto buffer_done;
+		}
 
 		/* Support for BSG ioctls */
-		seq_buf_printf(&s, " BSG");
+		scnprintf(tmp, sizeof(tmp), " BSG");
+		if (strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf)) >=
+		    sizeof(lpfcinfobuf))
+			goto buffer_done;
 
 		/* PCI resettable */
-		if (!lpfc_check_pci_resettable(phba))
-			seq_buf_printf(&s, " PCI resettable");
+		if (!lpfc_check_pci_resettable(phba)) {
+			scnprintf(tmp, sizeof(tmp), " PCI resettable");
+			strlcat(lpfcinfobuf, tmp, sizeof(lpfcinfobuf));
+		}
 	}
 
+buffer_done:
 	return lpfcinfobuf;
 }
 
@@ -5693,7 +5712,7 @@ lpfc_taskmgmt_name(uint8_t task_mgmt_cmd)
  * @vport: The virtual port for which this call is being executed.
  * @lpfc_cmd: Pointer to lpfc_io_buf data structure.
  *
- * This routine checks the FCP RSP INFO to see if the tsk mgmt command succeeded
+ * This routine checks the FCP RSP INFO to see if the tsk mgmt command succeded
  *
  * Return code :
  *   0x2003 - Error

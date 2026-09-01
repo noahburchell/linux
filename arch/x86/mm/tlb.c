@@ -162,7 +162,7 @@ static inline unsigned long build_cr3(pgd_t *pgd, u16 asid, unsigned long lam)
 {
 	unsigned long cr3 = __sme_pa(pgd) | lam;
 
-	if (cpu_feature_enabled(X86_FEATURE_PCID)) {
+	if (static_cpu_has(X86_FEATURE_PCID)) {
 		cr3 |= kern_pcid(asid);
 	} else {
 		VM_WARN_ON_ONCE(asid != 0);
@@ -197,7 +197,7 @@ static void clear_asid_other(void)
 	 * This is only expected to be set if we have disabled
 	 * kernel _PAGE_GLOBAL pages.
 	 */
-	if (!cpu_feature_enabled(X86_FEATURE_PTI)) {
+	if (!static_cpu_has(X86_FEATURE_PTI)) {
 		WARN_ON_ONCE(1);
 		return;
 	}
@@ -227,7 +227,7 @@ static struct new_asid choose_new_asid(struct mm_struct *next, u64 next_tlb_gen)
 	struct new_asid ns;
 	u16 asid;
 
-	if (!cpu_feature_enabled(X86_FEATURE_PCID)) {
+	if (!static_cpu_has(X86_FEATURE_PCID)) {
 		ns.asid = 0;
 		ns.need_flush = 1;
 		return ns;
@@ -555,7 +555,7 @@ static inline void invalidate_user_asid(u16 asid)
 	if (!cpu_feature_enabled(X86_FEATURE_PCID))
 		return;
 
-	if (!cpu_feature_enabled(X86_FEATURE_PTI))
+	if (!static_cpu_has(X86_FEATURE_PTI))
 		return;
 
 	__set_bit(kern_pcid(asid),
@@ -1123,7 +1123,7 @@ static void flush_tlb_func(void *info)
 	VM_WARN_ON(!irqs_disabled());
 
 	if (!local) {
-		inc_irq_stat(TLB);
+		inc_irq_stat(irq_tlb_count);
 		count_vm_tlb_event(NR_TLB_REMOTE_FLUSH_RECEIVED);
 	}
 
@@ -1384,8 +1384,8 @@ static void init_flush_tlb_info(struct flush_tlb_info *info,
 	 * would be faster, do a full flush.
 	 */
 	if ((end - start) >> stride_shift > tlb_single_page_flush_ceiling) {
-		start	= 0;
-		end	= TLB_FLUSH_ALL;
+		start = 0;
+		end = TLB_FLUSH_ALL;
 	}
 
 	info->start		= start;
@@ -1410,7 +1410,8 @@ void flush_tlb_mm_range(struct mm_struct *mm, unsigned long start,
 	/* This is also a barrier that synchronizes with switch_mm(). */
 	new_tlb_gen = inc_mm_tlb_gen(mm);
 
-	init_flush_tlb_info(&info, mm, start, end, stride_shift, freed_tables, new_tlb_gen);
+	init_flush_tlb_info(&info, mm, start, end, stride_shift, freed_tables,
+			    new_tlb_gen);
 
 	/*
 	 * flush_tlb_multi() is not optimized for the common case in which only
@@ -1558,7 +1559,7 @@ void flush_tlb_one_kernel(unsigned long addr)
 	 */
 	flush_tlb_one_user(addr);
 
-	if (!cpu_feature_enabled(X86_FEATURE_PTI))
+	if (!static_cpu_has(X86_FEATURE_PTI))
 		return;
 
 	/*
@@ -1582,7 +1583,7 @@ STATIC_NOPV void native_flush_tlb_one_user(unsigned long addr)
 	invlpg(addr);
 
 	/* If PTI is off there is no user PCID and nothing to flush. */
-	if (!cpu_feature_enabled(X86_FEATURE_PTI))
+	if (!static_cpu_has(X86_FEATURE_PTI))
 		return;
 
 	loaded_mm_asid = this_cpu_read(cpu_tlbstate.loaded_mm_asid);
@@ -1611,7 +1612,7 @@ STATIC_NOPV void native_flush_tlb_global(void)
 {
 	unsigned long flags;
 
-	if (cpu_feature_enabled(X86_FEATURE_INVPCID)) {
+	if (static_cpu_has(X86_FEATURE_INVPCID)) {
 		/*
 		 * Using INVPCID is considerably faster than a pair of writes
 		 * to CR4 sandwiched inside an IRQ flag save/restore.
@@ -1745,7 +1746,7 @@ bool nmi_uaccess_okay(void)
 }
 
 static ssize_t tlbflush_read_file(struct file *file, char __user *user_buf,
-				  size_t count, loff_t *ppos)
+			     size_t count, loff_t *ppos)
 {
 	char buf[32];
 	unsigned int len;
@@ -1754,15 +1755,20 @@ static ssize_t tlbflush_read_file(struct file *file, char __user *user_buf,
 	return simple_read_from_buffer(user_buf, count, ppos, buf, len);
 }
 
-static ssize_t tlbflush_write_file(struct file *file, const char __user *user_buf,
-				   size_t count, loff_t *ppos)
+static ssize_t tlbflush_write_file(struct file *file,
+		 const char __user *user_buf, size_t count, loff_t *ppos)
 {
+	char buf[32];
+	ssize_t len;
 	int ceiling;
-	int err;
 
-	err = kstrtoint_from_user(user_buf, count, 0, &ceiling);
-	if (err)
-		return err;
+	len = min(count, sizeof(buf) - 1);
+	if (copy_from_user(buf, user_buf, len))
+		return -EFAULT;
+
+	buf[len] = '\0';
+	if (kstrtoint(buf, 0, &ceiling))
+		return -EINVAL;
 
 	if (ceiling < 0)
 		return -EINVAL;

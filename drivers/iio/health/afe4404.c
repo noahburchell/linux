@@ -551,8 +551,10 @@ static int afe4404_probe(struct i2c_client *client)
 				       iio_trigger_generic_data_rdy_poll,
 				       IRQF_NO_THREAD, AFE4404_DRIVER_NAME,
 				       afe->trig);
-		if (ret)
+		if (ret) {
+			dev_err(dev, "Unable to request IRQ\n");
 			return ret;
+		}
 	}
 
 	ret = devm_iio_triggered_buffer_setup(dev, indio_dev,
@@ -573,7 +575,7 @@ static int afe4404_probe(struct i2c_client *client)
 }
 
 static const struct i2c_device_id afe4404_ids[] = {
-	{ .name = "afe4404" },
+	{ "afe4404" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, afe4404_ids);

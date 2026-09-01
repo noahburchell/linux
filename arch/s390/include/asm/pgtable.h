@@ -842,7 +842,7 @@ static inline int pte_same(pte_t a, pte_t b)
 	return pte_val(a) == pte_val(b);
 }
 
-#ifdef CONFIG_ARCH_HAS_PTE_PROTNONE
+#ifdef CONFIG_NUMA_BALANCING
 static inline int pte_protnone(pte_t pte)
 {
 	return pte_present(pte) && !(pte_val(pte) & _PAGE_READ);
@@ -853,7 +853,7 @@ static inline int pmd_protnone(pmd_t pmd)
 	/* pmd_leaf(pmd) implies pmd_present(pmd) */
 	return pmd_leaf(pmd) && !(pmd_val(pmd) & _SEGMENT_ENTRY_READ);
 }
-#endif /* CONFIG_ARCH_HAS_PTE_PROTNONE */
+#endif
 
 static inline bool pte_swp_exclusive(pte_t pte)
 {
@@ -903,7 +903,7 @@ static inline pmd_t pmd_clear_soft_dirty(pmd_t pmd)
 	return clear_pmd_bit(pmd, __pgprot(_SEGMENT_ENTRY_SOFT_DIRTY));
 }
 
-#ifdef CONFIG_ARCH_HAS_PMD_SOFTLEAVES
+#ifdef CONFIG_ARCH_ENABLE_THP_MIGRATION
 #define pmd_swp_soft_dirty(pmd)		pmd_soft_dirty(pmd)
 #define pmd_swp_mksoft_dirty(pmd)	pmd_mksoft_dirty(pmd)
 #define pmd_swp_clear_soft_dirty(pmd)	pmd_clear_soft_dirty(pmd)
@@ -985,39 +985,22 @@ static inline void set_pte(pte_t *ptep, pte_t pte)
 	WRITE_ONCE(*ptep, pte);
 }
 
-#define ptep_get ptep_get
-static inline pte_t ptep_get(pte_t *ptep)
+static inline void pgd_clear(pgd_t *pgd)
 {
-	return READ_ONCE(*ptep);
+	if ((pgd_val(*pgd) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R1)
+		set_pgd(pgd, __pgd(_REGION1_ENTRY_EMPTY));
 }
 
-#define pmdp_get pmdp_get
-static inline pmd_t pmdp_get(pmd_t *pmdp)
+static inline void p4d_clear(p4d_t *p4d)
 {
-	return READ_ONCE(*pmdp);
+	if ((p4d_val(*p4d) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R2)
+		set_p4d(p4d, __p4d(_REGION2_ENTRY_EMPTY));
 }
 
-#define pudp_get pudp_get
-static inline pud_t pudp_get(pud_t *pudp)
+static inline void pud_clear(pud_t *pud)
 {
-	return READ_ONCE(*pudp);
-}
-
-#define p4dp_get p4dp_get
-static inline p4d_t p4dp_get(p4d_t *p4dp)
-{
-	return READ_ONCE(*p4dp);
-}
-
-#define pgdp_get pgdp_get
-static inline pgd_t pgdp_get(pgd_t *pgdp)
-{
-	return READ_ONCE(*pgdp);
-}
-
-static inline void pte_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
-{
-	set_pte(ptep, __pte(_PAGE_INVALID));
+	if ((pud_val(*pud) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R3)
+		set_pud(pud, __pud(_REGION3_ENTRY_EMPTY));
 }
 
 static inline void pmd_clear(pmd_t *pmdp)
@@ -1025,22 +1008,9 @@ static inline void pmd_clear(pmd_t *pmdp)
 	set_pmd(pmdp, __pmd(_SEGMENT_ENTRY_EMPTY));
 }
 
-static inline void pud_clear(pud_t *pud)
+static inline void pte_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 {
-	if ((pud_val(pudp_get(pud)) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R3)
-		set_pud(pud, __pud(_REGION3_ENTRY_EMPTY));
-}
-
-static inline void p4d_clear(p4d_t *p4d)
-{
-	if ((p4d_val(p4dp_get(p4d)) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R2)
-		set_p4d(p4d, __p4d(_REGION2_ENTRY_EMPTY));
-}
-
-static inline void pgd_clear(pgd_t *pgd)
-{
-	if ((pgd_val(pgdp_get(pgd)) & _REGION_ENTRY_TYPE_MASK) == _REGION_ENTRY_TYPE_R1)
-		set_pgd(pgd, __pgd(_REGION1_ENTRY_EMPTY));
+	set_pte(ptep, __pte(_PAGE_INVALID));
 }
 
 /*
@@ -1201,7 +1171,7 @@ pte_t ptep_xchg_lazy(struct mm_struct *, unsigned long, pte_t *, pte_t);
 static inline bool ptep_test_and_clear_young(struct vm_area_struct *vma,
 		unsigned long addr, pte_t *ptep)
 {
-	pte_t pte = ptep_get(ptep);
+	pte_t pte = *ptep;
 
 	pte = ptep_xchg_direct(vma->vm_mm, addr, ptep, pte_mkold(pte));
 	return pte_young(pte);
@@ -1221,10 +1191,10 @@ static inline pte_t ptep_get_and_clear(struct mm_struct *mm,
 	pte_t res;
 
 	res = ptep_xchg_lazy(mm, addr, ptep, __pte(_PAGE_INVALID));
-	page_table_check_pte_clear(mm, addr, res);
 	/* At this point the reference through the mapping is still present */
 	if (mm_is_protected(mm) && pte_present(res))
 		WARN_ON_ONCE(uv_convert_from_secure_pte(res));
+	page_table_check_pte_clear(mm, addr, res);
 	return res;
 }
 
@@ -1240,10 +1210,10 @@ static inline pte_t ptep_clear_flush(struct vm_area_struct *vma,
 	pte_t res;
 
 	res = ptep_xchg_direct(vma->vm_mm, addr, ptep, __pte(_PAGE_INVALID));
-	page_table_check_pte_clear(vma->vm_mm, addr, res);
 	/* At this point the reference through the mapping is still present */
 	if (mm_is_protected(vma->vm_mm) && pte_present(res))
 		WARN_ON_ONCE(uv_convert_from_secure_pte(res));
+	page_table_check_pte_clear(vma->vm_mm, addr, res);
 	return res;
 }
 
@@ -1262,28 +1232,31 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 	pte_t res;
 
 	if (full) {
-		res = ptep_get(ptep);
+		res = *ptep;
 		set_pte(ptep, __pte(_PAGE_INVALID));
 	} else {
 		res = ptep_xchg_lazy(mm, addr, ptep, __pte(_PAGE_INVALID));
 	}
+
 	page_table_check_pte_clear(mm, addr, res);
-	/* At this point the reference through the mapping is still present */
-	if (mm_is_protected(mm) && pte_present(res)) {
-		/*
-		 * The notifier should have destroyed all protected vCPUs at
-		 * this point, so the destroy should be successful.
-		 */
-		if (full && !uv_destroy_pte(res))
-			return res;
-		/*
-		 * If something went wrong and the page could not be destroyed,
-		 * or if this is not a mm teardown, the slower export is used
-		 * as fallback instead. If even that fails, print a warning and
-		 * leak the page, to avoid crashing the whole system.
-		 */
-		WARN_ON_ONCE(uv_convert_from_secure_pte(res));
-	}
+
+	/* Nothing to do */
+	if (!mm_is_protected(mm) || !pte_present(res))
+		return res;
+	/*
+	 * At this point the reference through the mapping is still present.
+	 * The notifier should have destroyed all protected vCPUs at this
+	 * point, so the destroy should be successful.
+	 */
+	if (full && !uv_destroy_pte(res))
+		return res;
+	/*
+	 * If something went wrong and the page could not be destroyed, or
+	 * if this is not a mm teardown, the slower export is used as
+	 * fallback instead. If even that fails, print a warning and leak
+	 * the page, to avoid crashing the whole system.
+	 */
+	WARN_ON_ONCE(uv_convert_from_secure_pte(res));
 	return res;
 }
 
@@ -1291,7 +1264,7 @@ static inline pte_t ptep_get_and_clear_full(struct mm_struct *mm,
 static inline void ptep_set_wrprotect(struct mm_struct *mm,
 				      unsigned long addr, pte_t *ptep)
 {
-	pte_t pte = ptep_get(ptep);
+	pte_t pte = *ptep;
 
 	if (pte_write(pte))
 		ptep_xchg_lazy(mm, addr, ptep, pte_wrprotect(pte));
@@ -1327,7 +1300,7 @@ static inline void flush_tlb_fix_spurious_fault(struct vm_area_struct *vma,
 	 * PTE does not have _PAGE_PROTECT set, to avoid unnecessary overhead.
 	 * A local RDP can be used to do the flush.
 	 */
-	if (cpu_has_rdp() && !(pte_val(ptep_get(ptep)) & _PAGE_PROTECT))
+	if (cpu_has_rdp() && !(pte_val(*ptep) & _PAGE_PROTECT))
 		__ptep_rdp(address, ptep, 1);
 }
 #define flush_tlb_fix_spurious_fault flush_tlb_fix_spurious_fault

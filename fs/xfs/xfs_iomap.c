@@ -45,7 +45,7 @@ xfs_alert_fsblock_zero(
 			"Access to block zero in inode %llu "
 			"start_block: %llx start_off: %llx "
 			"blkcnt: %llx extent-state: %x",
-		(unsigned long long)I_INO(ip),
+		(unsigned long long)ip->i_ino,
 		(unsigned long long)imap->br_startblock,
 		(unsigned long long)imap->br_startoff,
 		(unsigned long long)imap->br_blockcount,
@@ -1037,11 +1037,8 @@ out_unlock:
 	return error;
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_direct_write_iomap_next,
-		xfs_direct_write_iomap_begin);
-
 const struct iomap_ops xfs_direct_write_iomap_ops = {
-	.iomap_next		= xfs_direct_write_iomap_next,
+	.iomap_begin		= xfs_direct_write_iomap_begin,
 };
 
 #ifdef CONFIG_XFS_RT
@@ -1083,15 +1080,17 @@ xfs_zoned_direct_write_iomap_begin(
 			return error;
 	}
 
-	xfs_iomap_set_anon_write(ip, iomap, offset, length);
+	iomap->type = IOMAP_MAPPED;
+	iomap->flags = IOMAP_F_DIRTY;
+	iomap->bdev = ip->i_mount->m_rtdev_targp->bt_bdev;
+	iomap->offset = offset;
+	iomap->length = length;
+	iomap->flags = IOMAP_F_ANON_WRITE;
 	return 0;
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_zoned_direct_write_iomap_next,
-		xfs_zoned_direct_write_iomap_begin);
-
 const struct iomap_ops xfs_zoned_direct_write_iomap_ops = {
-	.iomap_next		= xfs_zoned_direct_write_iomap_next,
+	.iomap_begin		= xfs_zoned_direct_write_iomap_begin,
 };
 #endif /* CONFIG_XFS_RT */
 
@@ -1275,11 +1274,8 @@ out_unlock:
 	return error;
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_atomic_write_cow_iomap_next,
-		xfs_atomic_write_cow_iomap_begin);
-
 const struct iomap_ops xfs_atomic_write_cow_iomap_ops = {
-	.iomap_next		= xfs_atomic_write_cow_iomap_next,
+	.iomap_begin		= xfs_atomic_write_cow_iomap_begin,
 };
 
 static int
@@ -1302,11 +1298,9 @@ xfs_dax_write_iomap_end(
 	return xfs_reflink_end_cow(ip, pos, written);
 }
 
-static DEFINE_IOMAP_ITER_NEXT_END(xfs_dax_write_iomap_next,
-		xfs_direct_write_iomap_begin, xfs_dax_write_iomap_end);
-
 const struct iomap_ops xfs_dax_write_iomap_ops = {
-	.iomap_next	= xfs_dax_write_iomap_next,
+	.iomap_begin	= xfs_direct_write_iomap_begin,
+	.iomap_end	= xfs_dax_write_iomap_end,
 };
 
 /*
@@ -1742,7 +1736,7 @@ restart:
 	if (count_fsb > ac->reserved_blocks) {
 		xfs_warn_ratelimited(mp,
 "Short write on ino 0x%llx comm %.20s due to three-way race with write fault and direct I/O",
-			I_INO(ip), current->comm);
+			ip->i_ino, current->comm);
 		count_fsb = ac->reserved_blocks;
 		if (!count_fsb) {
 			error = -EIO;
@@ -2174,14 +2168,12 @@ xfs_buffered_write_iomap_end(
 	return 0;
 }
 
-static DEFINE_IOMAP_ITER_NEXT_END(xfs_buffered_write_iomap_next,
-		xfs_buffered_write_iomap_begin, xfs_buffered_write_iomap_end);
-
 const struct iomap_ops xfs_buffered_write_iomap_ops = {
-	.iomap_next		= xfs_buffered_write_iomap_next,
+	.iomap_begin		= xfs_buffered_write_iomap_begin,
+	.iomap_end		= xfs_buffered_write_iomap_end,
 };
 
-int
+static int
 xfs_read_iomap_begin(
 	struct inode		*inode,
 	loff_t			offset,
@@ -2222,10 +2214,8 @@ xfs_read_iomap_begin(
 				 shared ? IOMAP_F_SHARED : 0, seq);
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_read_iomap_next, xfs_read_iomap_begin);
-
 const struct iomap_ops xfs_read_iomap_ops = {
-	.iomap_next		= xfs_read_iomap_next,
+	.iomap_begin		= xfs_read_iomap_begin,
 };
 
 static int
@@ -2312,10 +2302,8 @@ out_unlock:
 	return error;
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_seek_iomap_next, xfs_seek_iomap_begin);
-
 const struct iomap_ops xfs_seek_iomap_ops = {
-	.iomap_next		= xfs_seek_iomap_next,
+	.iomap_begin		= xfs_seek_iomap_begin,
 };
 
 static int
@@ -2361,10 +2349,8 @@ out_unlock:
 	return xfs_bmbt_to_iomap(ip, iomap, &imap, flags, IOMAP_F_XATTR, seq);
 }
 
-static DEFINE_IOMAP_ITER_NEXT(xfs_xattr_iomap_next, xfs_xattr_iomap_begin);
-
 const struct iomap_ops xfs_xattr_iomap_ops = {
-	.iomap_next		= xfs_xattr_iomap_next,
+	.iomap_begin		= xfs_xattr_iomap_begin,
 };
 
 int

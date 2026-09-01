@@ -122,7 +122,7 @@ EXPORT_SYMBOL_GPL(base64_encode);
  * @src: the string to decode.  Doesn't need to be NUL-terminated.
  * @srclen: the length of @src in bytes
  * @dst: (output) the decoded binary data
- * @padding: whether the input is expected to include '=' padding characters
+ * @padding: whether to append '=' padding characters
  * @variant: which base64 variant to use
  *
  * Decodes a string using the selected Base64 variant.

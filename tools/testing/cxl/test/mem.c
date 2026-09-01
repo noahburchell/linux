@@ -2,6 +2,7 @@
 // Copyright(c) 2021 Intel Corporation. All rights reserved.
 
 #include <linux/platform_device.h>
+#include <linux/mod_devicetable.h>
 #include <linux/vmalloc.h>
 #include <linux/module.h>
 #include <linux/delay.h>
@@ -1713,7 +1714,6 @@ static int cxl_mock_mem_probe(struct platform_device *pdev)
 	struct cxl_mockmem_data *mdata;
 	struct cxl_mailbox *cxl_mbox;
 	struct cxl_dpa_info range_info = { 0 };
-	u64 serial;
 	int rc;
 
 	/* Increase async probe race window */
@@ -1740,19 +1740,7 @@ static int cxl_mock_mem_probe(struct platform_device *pdev)
 	if (rc)
 		return rc;
 
-	/*
-	 * Mock serials have historically been derived from pdev->id and stayed
-	 * single-digit, so they never exercised either decimal-vs-hex key
-	 * lookup or unsigned formatting. Give one mock device a full-width
-	 * serial with bit 63 set, matching real hardware such as Montage CXL
-	 * devices. pdev->id 7 is unused by the auto-region topology.
-	 */
-	if (pdev->id == 7)
-		serial = 0x8a34567890abcdef;
-	else
-		serial = pdev->id + 1;
-
-	mds = cxl_memdev_state_create(dev, serial, 0);
+	mds = cxl_memdev_state_create(dev, pdev->id + 1, 0);
 	if (IS_ERR(mds))
 		return PTR_ERR(mds);
 
@@ -1802,7 +1790,7 @@ static int cxl_mock_mem_probe(struct platform_device *pdev)
 
 	cxl_mock_add_event_logs(&mdata->mes);
 
-	cxlmd = devm_cxl_add_classdev(cxlds);
+	cxlmd = devm_cxl_add_memdev(cxlds, NULL);
 	if (IS_ERR(cxlmd))
 		return PTR_ERR(cxlmd);
 

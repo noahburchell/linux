@@ -215,7 +215,7 @@ static struct sk_buff *br_mrp_alloc_test_skb(struct br_mrp *mrp,
 		struct br_mrp_oui_hdr *oui = NULL;
 		u8 length;
 
-		length = sizeof(*sub_opt) + sizeof(*sub_tlv) + sizeof(*oui) +
+		length = sizeof(*sub_opt) + sizeof(*sub_tlv) + sizeof(oui) +
 			MRP_OPT_PADDING;
 		br_mrp_skb_tlv(skb, BR_MRP_TLV_HEADER_OPTION, length);
 
@@ -224,9 +224,11 @@ static struct sk_buff *br_mrp_alloc_test_skb(struct br_mrp *mrp,
 		sub_opt = skb_put(skb, sizeof(*sub_opt));
 		memset(sub_opt, 0x0, sizeof(*sub_opt));
 
-		/* 32 bit alligment shall be ensured therefore add 2 bytes */
-		sub_tlv = skb_put_zero(skb, sizeof(*sub_tlv) + MRP_OPT_PADDING);
+		sub_tlv = skb_put(skb, sizeof(*sub_tlv));
 		sub_tlv->type = BR_MRP_SUB_TLV_HEADER_TEST_AUTO_MGR;
+
+		/* 32 bit alligment shall be ensured therefore add 2 bytes */
+		skb_put(skb, MRP_OPT_PADDING);
 	}
 
 	br_mrp_skb_tlv(skb, BR_MRP_TLV_HEADER_END, 0x0);
@@ -452,7 +454,7 @@ static void br_mrp_del_impl(struct net_bridge *br, struct br_mrp *mrp)
 		state = netif_running(br->dev) ?
 				BR_STATE_FORWARDING : BR_STATE_DISABLED;
 		p->state = state;
-		clear_bit(BR_MRP_AWARE_BIT, &p->flags);
+		p->flags &= ~BR_MRP_AWARE;
 		spin_unlock_bh(&br->lock);
 		br_mrp_port_switchdev_set_state(p, state);
 		rcu_assign_pointer(mrp->p_port, NULL);
@@ -464,7 +466,7 @@ static void br_mrp_del_impl(struct net_bridge *br, struct br_mrp *mrp)
 		state = netif_running(br->dev) ?
 				BR_STATE_FORWARDING : BR_STATE_DISABLED;
 		p->state = state;
-		clear_bit(BR_MRP_AWARE_BIT, &p->flags);
+		p->flags &= ~BR_MRP_AWARE;
 		spin_unlock_bh(&br->lock);
 		br_mrp_port_switchdev_set_state(p, state);
 		rcu_assign_pointer(mrp->s_port, NULL);
@@ -476,7 +478,7 @@ static void br_mrp_del_impl(struct net_bridge *br, struct br_mrp *mrp)
 		state = netif_running(br->dev) ?
 				BR_STATE_FORWARDING : BR_STATE_DISABLED;
 		p->state = state;
-		clear_bit(BR_MRP_AWARE_BIT, &p->flags);
+		p->flags &= ~BR_MRP_AWARE;
 		spin_unlock_bh(&br->lock);
 		br_mrp_port_switchdev_set_state(p, state);
 		rcu_assign_pointer(mrp->i_port, NULL);
@@ -524,14 +526,14 @@ int br_mrp_add(struct net_bridge *br, struct br_mrp_instance *instance)
 	p = br_mrp_get_port(br, instance->p_ifindex);
 	spin_lock_bh(&br->lock);
 	p->state = BR_STATE_FORWARDING;
-	set_bit(BR_MRP_AWARE_BIT, &p->flags);
+	p->flags |= BR_MRP_AWARE;
 	spin_unlock_bh(&br->lock);
 	rcu_assign_pointer(mrp->p_port, p);
 
 	p = br_mrp_get_port(br, instance->s_ifindex);
 	spin_lock_bh(&br->lock);
 	p->state = BR_STATE_FORWARDING;
-	set_bit(BR_MRP_AWARE_BIT, &p->flags);
+	p->flags |= BR_MRP_AWARE;
 	spin_unlock_bh(&br->lock);
 	rcu_assign_pointer(mrp->s_port, p);
 
@@ -591,7 +593,7 @@ int br_mrp_set_port_state(struct net_bridge_port *p,
 {
 	u32 port_state;
 
-	if (!p || !test_bit(BR_MRP_AWARE_BIT, &p->flags))
+	if (!p || !(p->flags & BR_MRP_AWARE))
 		return -EINVAL;
 
 	spin_lock_bh(&p->br->lock);
@@ -617,7 +619,7 @@ int br_mrp_set_port_role(struct net_bridge_port *p,
 {
 	struct br_mrp *mrp;
 
-	if (!p || !test_bit(BR_MRP_AWARE_BIT, &p->flags))
+	if (!p || !(p->flags & BR_MRP_AWARE))
 		return -EINVAL;
 
 	mrp = br_mrp_find_port(p->br, p);
@@ -782,7 +784,7 @@ int br_mrp_set_in_role(struct net_bridge *br, struct br_mrp_in_role *role)
 		state = netif_running(br->dev) ?
 				BR_STATE_FORWARDING : BR_STATE_DISABLED;
 		p->state = state;
-		clear_bit(BR_MRP_AWARE_BIT, &p->flags);
+		p->flags &= ~BR_MRP_AWARE;
 		spin_unlock_bh(&br->lock);
 		br_mrp_port_switchdev_set_state(p, state);
 		rcu_assign_pointer(mrp->i_port, NULL);
@@ -807,7 +809,7 @@ int br_mrp_set_in_role(struct net_bridge *br, struct br_mrp_in_role *role)
 	p = br_mrp_get_port(br, role->i_ifindex);
 	spin_lock_bh(&br->lock);
 	p->state = BR_STATE_FORWARDING;
-	set_bit(BR_MRP_AWARE_BIT, &p->flags);
+	p->flags |= BR_MRP_AWARE;
 	spin_unlock_bh(&br->lock);
 	rcu_assign_pointer(mrp->i_port, p);
 
@@ -1244,7 +1246,7 @@ no_forward:
 static int br_mrp_process(struct net_bridge_port *p, struct sk_buff *skb)
 {
 	/* If there is no MRP instance do normal forwarding */
-	if (likely(!test_bit(BR_MRP_AWARE_BIT, &p->flags)))
+	if (likely(!(p->flags & BR_MRP_AWARE)))
 		goto out;
 
 	return br_mrp_rcv(p, skb, p->dev);

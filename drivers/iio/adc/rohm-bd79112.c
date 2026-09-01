@@ -14,6 +14,7 @@
 #include <linux/err.h>
 #include <linux/errno.h>
 #include <linux/gpio/driver.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
@@ -529,7 +530,7 @@ static const struct of_device_id bd79112_of_match[] = {
 MODULE_DEVICE_TABLE(of, bd79112_of_match);
 
 static const struct spi_device_id bd79112_id[] = {
-	{ .name = "bd79112" },
+	{ "bd79112" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, bd79112_id);

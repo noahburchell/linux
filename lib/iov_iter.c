@@ -1224,13 +1224,13 @@ const void *dup_iter(struct iov_iter *new, struct iov_iter *old, gfp_t flags)
 {
 	*new = *old;
 	if (iov_iter_is_bvec(new))
-		return new->bvec = kmemdup_array(new->bvec,
-				    new->nr_segs, sizeof(struct bio_vec),
+		return new->bvec = kmemdup(new->bvec,
+				    new->nr_segs * sizeof(struct bio_vec),
 				    flags);
 	else if (iov_iter_is_kvec(new) || iter_is_iovec(new))
 		/* iovec and kvec have identical layout */
-		return new->__iov = kmemdup_array(new->__iov,
-				   new->nr_segs, sizeof(struct iovec),
+		return new->__iov = kmemdup(new->__iov,
+				   new->nr_segs * sizeof(struct iovec),
 				   flags);
 	return NULL;
 }
@@ -1491,7 +1491,6 @@ void iov_iter_restore(struct iov_iter *i, struct iov_iter_state *state)
 		i->__iov -= state->nr_segs - i->nr_segs;
 	i->nr_segs = state->nr_segs;
 }
-EXPORT_SYMBOL_FOR_MODULES(iov_iter_restore, "vmw_vsock_virtio_transport_common");
 
 /*
  * Extract a list of contiguous pages from an ITER_FOLIOQ iterator.  This does
@@ -1569,7 +1568,6 @@ static ssize_t iov_iter_extract_xarray_pages(struct iov_iter *i,
 	struct folio *folio;
 	unsigned int nr = 0, offset;
 	loff_t pos = i->xarray_start + i->iov_offset;
-	bool will_alloc = !*pages;
 	XA_STATE(xas, i->xarray, pos >> PAGE_SHIFT);
 
 	offset = pos & ~PAGE_MASK;
@@ -1596,14 +1594,6 @@ static ssize_t iov_iter_extract_xarray_pages(struct iov_iter *i,
 			break;
 	}
 	rcu_read_unlock();
-
-	if (!nr) {
-		if (will_alloc) {
-			kvfree(*pages);
-			*pages = NULL;
-		}
-		return 0;
-	}
 
 	maxsize = min_t(size_t, nr * PAGE_SIZE - offset, maxsize);
 	iov_iter_advance(i, maxsize);
@@ -1635,11 +1625,9 @@ static ssize_t iov_iter_extract_bvec_pages(struct iov_iter *i,
 	}
 	bi.bi_idx = 0;
 	bi.bi_size = maxsize;
-	bi.bi_offset = skip;
+	bi.bi_bvec_done = skip;
 
 	maxpages = want_pages_array(pages, maxsize, skip, maxpages);
-	if (!maxpages)
-		return -ENOMEM;
 
 	while (bi.bi_size && bi.bi_idx < i->nr_segs) {
 		struct bio_vec bv = bvec_iter_bvec(i->bvec, bi);
@@ -1757,7 +1745,6 @@ static ssize_t iov_iter_extract_user_pages(struct iov_iter *i,
 	unsigned long addr;
 	unsigned int gup_flags = 0;
 	size_t offset;
-	bool will_alloc = !*pages;
 	int res;
 
 	if (i->data_source == ITER_DEST)
@@ -1774,14 +1761,8 @@ static ssize_t iov_iter_extract_user_pages(struct iov_iter *i,
 	if (!maxpages)
 		return -ENOMEM;
 	res = pin_user_pages_fast(addr, maxpages, gup_flags, *pages);
-	if (unlikely(res <= 0)) {
-		if (will_alloc) {
-			kvfree(*pages);
-			*pages = NULL;
-		}
+	if (unlikely(res <= 0))
 		return res;
-	}
-
 	maxsize = min_t(size_t, maxsize, res * PAGE_SIZE - offset);
 	iov_iter_advance(i, maxsize);
 	return maxsize;
@@ -1905,8 +1886,6 @@ static unsigned int get_contig_folio_len(struct page **pages,
  * @max_size:	maximum size to extract from @iter
  * @nr_vecs:	number of vectors in @bv (on in and output)
  * @max_vecs:	maximum vectors in @bv, including those filled before calling
- * @mem_align_mask:	reject with -EINVAL if the source address or
- *		length is not aligned to this mask
  * @extraction_flags: flags to qualify request
  *
  * Like iov_iter_extract_pages(), but returns physically contiguous ranges
@@ -1918,18 +1897,13 @@ static unsigned int get_contig_folio_len(struct page **pages,
  */
 ssize_t iov_iter_extract_bvecs(struct iov_iter *iter, struct bio_vec *bv,
 		size_t max_size, unsigned short *nr_vecs,
-		unsigned short max_vecs, unsigned mem_align_mask,
-		iov_iter_extraction_t extraction_flags)
+		unsigned short max_vecs, iov_iter_extraction_t extraction_flags)
 {
-	unsigned long start = (unsigned long)iter_iov_addr(iter);
 	unsigned short entries_left = max_vecs - *nr_vecs;
 	unsigned short nr_pages, i = 0;
 	size_t left, offset, len;
 	struct page **pages;
 	ssize_t size;
-
-	if ((start | iter_iov_len(iter)) & mem_align_mask)
-		return -EINVAL;
 
 	/*
 	 * Move page array up in the allocated memory for the bio vecs as far as

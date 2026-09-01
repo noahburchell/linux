@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
  * DAMON Code for Virtual Address Spaces
+ *
+ * Author: SeongJae Park <sj@kernel.org>
  */
 
 #define pr_fmt(fmt) "damon-va: " fmt
@@ -10,7 +12,6 @@
 #include <linux/mman.h>
 #include <linux/mmu_notifier.h>
 #include <linux/page_idle.h>
-#include <linux/pagemap.h>
 #include <linux/pagewalk.h>
 #include <linux/sched/mm.h>
 
@@ -236,35 +237,6 @@ static void damon_va_update(struct damon_ctx *ctx)
 	}
 }
 
-static void damon_va_walk_page_range(struct mm_struct *mm, unsigned long start,
-		unsigned long end, struct mm_walk_ops *ops, void *private)
-{
-	struct vm_area_struct *vma;
-
-	vma = lock_vma_under_rcu(mm, start);
-	if (!vma)
-		goto lock_mmap;
-
-	if (end > vma->vm_end) {
-		vma_end_read(vma);
-		goto lock_mmap;
-	}
-
-	if (!(vma->vm_flags & VM_PFNMAP)) {
-		ops->walk_lock = PGWALK_VMA_RDLOCK_VERIFY;
-		walk_page_range_vma(vma, start, end, ops, private);
-	}
-
-	vma_end_read(vma);
-	return;
-
-lock_mmap:
-	mmap_read_lock(mm);
-	ops->walk_lock = PGWALK_RDLOCK;
-	walk_page_range(mm, start, end, ops, private);
-	mmap_read_unlock(mm);
-}
-
 static int damon_mkold_pmd_entry(pmd_t *pmd, unsigned long addr,
 		unsigned long next, struct mm_walk *walk)
 {
@@ -343,14 +315,17 @@ out:
 #define damon_mkold_hugetlb_entry NULL
 #endif /* CONFIG_HUGETLB_PAGE */
 
+static const struct mm_walk_ops damon_mkold_ops = {
+	.pmd_entry = damon_mkold_pmd_entry,
+	.hugetlb_entry = damon_mkold_hugetlb_entry,
+	.walk_lock = PGWALK_RDLOCK,
+};
+
 static void damon_va_mkold(struct mm_struct *mm, unsigned long addr)
 {
-	struct mm_walk_ops damon_mkold_ops = {
-		.pmd_entry = damon_mkold_pmd_entry,
-		.hugetlb_entry = damon_mkold_hugetlb_entry,
-	};
-
-	damon_va_walk_page_range(mm, addr, addr + 1, &damon_mkold_ops, NULL);
+	mmap_read_lock(mm);
+	walk_page_range(mm, addr, addr + 1, &damon_mkold_ops, NULL);
+	mmap_read_unlock(mm);
 }
 
 /*
@@ -358,10 +333,9 @@ static void damon_va_mkold(struct mm_struct *mm, unsigned long addr)
  */
 
 static void __damon_va_prepare_access_check(struct mm_struct *mm,
-					struct damon_region *r,
-					struct damon_ctx *ctx)
+					struct damon_region *r)
 {
-	r->sampling_addr = damon_rand(ctx, r->ar.start, r->ar.end);
+	r->sampling_addr = damon_rand(r->ar.start, r->ar.end);
 
 	damon_va_mkold(mm, r->sampling_addr);
 }
@@ -377,12 +351,14 @@ static void damon_va_prepare_access_checks(struct damon_ctx *ctx)
 		if (!mm)
 			continue;
 		damon_for_each_region(r, t)
-			__damon_va_prepare_access_check(mm, r, ctx);
+			__damon_va_prepare_access_check(mm, r);
 		mmput(mm);
 	}
 }
 
 struct damon_young_walk_private {
+	/* size of the folio for the access checked virtual memory address */
+	unsigned long *folio_sz;
 	bool young;
 };
 
@@ -409,6 +385,7 @@ static int damon_young_pmd_entry(pmd_t *pmd, unsigned long addr,
 					mmu_notifier_test_young(walk->mm,
 						addr))
 			priv->young = true;
+		*priv->folio_sz = HPAGE_PMD_SIZE;
 huge_out:
 		spin_unlock(ptl);
 		return 0;
@@ -427,6 +404,7 @@ huge_out:
 	if (pte_young(ptent) || !folio_test_idle(folio) ||
 			mmu_notifier_test_young(walk->mm, addr))
 		priv->young = true;
+	*priv->folio_sz = folio_size(folio);
 out:
 	pte_unmap_unlock(pte, ptl);
 	return 0;
@@ -454,6 +432,7 @@ static int damon_young_hugetlb_entry(pte_t *pte, unsigned long hmask,
 	if (pte_young(entry) || !folio_test_idle(folio) ||
 	    mmu_notifier_test_young(walk->mm, addr))
 		priv->young = true;
+	*priv->folio_sz = huge_page_size(h);
 
 	folio_put(folio);
 
@@ -465,18 +444,23 @@ out:
 #define damon_young_hugetlb_entry NULL
 #endif /* CONFIG_HUGETLB_PAGE */
 
-static bool damon_va_young(struct mm_struct *mm, unsigned long addr)
+static const struct mm_walk_ops damon_young_ops = {
+	.pmd_entry = damon_young_pmd_entry,
+	.hugetlb_entry = damon_young_hugetlb_entry,
+	.walk_lock = PGWALK_RDLOCK,
+};
+
+static bool damon_va_young(struct mm_struct *mm, unsigned long addr,
+		unsigned long *folio_sz)
 {
 	struct damon_young_walk_private arg = {
+		.folio_sz = folio_sz,
 		.young = false,
 	};
 
-	struct mm_walk_ops damon_young_ops = {
-		.pmd_entry = damon_young_pmd_entry,
-		.hugetlb_entry = damon_young_hugetlb_entry,
-	};
-
-	damon_va_walk_page_range(mm, addr, addr + 1, &damon_young_ops, &arg);
+	mmap_read_lock(mm);
+	walk_page_range(mm, addr, addr + 1, &damon_young_ops, &arg);
+	mmap_read_unlock(mm);
 	return arg.young;
 }
 
@@ -487,17 +471,29 @@ static bool damon_va_young(struct mm_struct *mm, unsigned long addr)
  * r	the region to be checked
  */
 static void __damon_va_check_access(struct mm_struct *mm,
-				struct damon_region *r)
+				struct damon_region *r, bool same_target,
+				struct damon_attrs *attrs)
 {
-	bool accessed;
+	static unsigned long last_addr;
+	static unsigned long last_folio_sz = PAGE_SIZE;
+	static bool last_accessed;
 
 	if (!mm) {
-		damon_update_region_access_rate(r, false);
+		damon_update_region_access_rate(r, false, attrs);
 		return;
 	}
 
-	accessed = damon_va_young(mm, r->sampling_addr);
-	damon_update_region_access_rate(r, accessed);
+	/* If the region is in the last checked page, reuse the result */
+	if (same_target && (ALIGN_DOWN(last_addr, last_folio_sz) ==
+				ALIGN_DOWN(r->sampling_addr, last_folio_sz))) {
+		damon_update_region_access_rate(r, last_accessed, attrs);
+		return;
+	}
+
+	last_accessed = damon_va_young(mm, r->sampling_addr, &last_folio_sz);
+	damon_update_region_access_rate(r, last_accessed, attrs);
+
+	last_addr = r->sampling_addr;
 }
 
 static unsigned int damon_va_check_accesses(struct damon_ctx *ctx)
@@ -506,12 +502,16 @@ static unsigned int damon_va_check_accesses(struct damon_ctx *ctx)
 	struct mm_struct *mm;
 	struct damon_region *r;
 	unsigned int max_nr_accesses = 0;
+	bool same_target;
 
 	damon_for_each_target(t, ctx) {
 		mm = damon_get_mm(t);
+		same_target = false;
 		damon_for_each_region(r, t) {
-			__damon_va_check_access(mm, r);
+			__damon_va_check_access(mm, r, same_target,
+					&ctx->attrs);
 			max_nr_accesses = max(r->nr_accesses, max_nr_accesses);
+			same_target = true;
 		}
 		if (mm)
 			mmput(mm);
@@ -603,8 +603,8 @@ static void damos_va_migrate_dests_add(struct folio *folio,
 	}
 
 	order = folio_order(folio);
-	ilx = vma_start_pgoff(vma) >> order;
-	ilx += linear_page_delta(vma, addr) >> order;
+	ilx = vma->vm_pgoff >> order;
+	ilx += (addr - vma->vm_start) >> (PAGE_SHIFT + order);
 
 	for (i = 0; i < dests->nr_dests; i++)
 		weight_total += dests->weight_arr[i];
@@ -627,8 +627,7 @@ static void damos_va_migrate_dests_add(struct folio *folio,
 isolate:
 	if (!folio_isolate_lru(folio))
 		return;
-	node_stat_add_folio(folio, NR_ISOLATED_ANON +
-			folio_is_file_lru(folio));
+
 	list_add(&folio->lru, &migration_lists[i]);
 }
 
@@ -750,6 +749,7 @@ static unsigned long damos_va_migrate(struct damon_target *target,
 	struct mm_walk_ops walk_ops = {
 		.pmd_entry = damos_va_migrate_pmd_entry,
 		.pte_entry = NULL,
+		.walk_lock = PGWALK_RDLOCK,
 	};
 
 	use_target_nid = dests->nr_dests == 0;
@@ -767,7 +767,9 @@ static unsigned long damos_va_migrate(struct damon_target *target,
 	if (!mm)
 		goto free_lists;
 
-	damon_va_walk_page_range(mm, r->ar.start, r->ar.end, &walk_ops, &priv);
+	mmap_read_lock(mm);
+	walk_page_range(mm, r->ar.start, r->ar.end, &walk_ops, &priv);
+	mmap_read_unlock(mm);
 	mmput(mm);
 
 	for (int i = 0; i < nr_dests; i++) {
@@ -859,6 +861,7 @@ static unsigned long damos_va_stat(struct damon_target *target,
 	struct mm_struct *mm;
 	struct mm_walk_ops walk_ops = {
 		.pmd_entry = damos_va_stat_pmd_entry,
+		.walk_lock = PGWALK_RDLOCK,
 	};
 
 	priv.scheme = s;
@@ -871,7 +874,9 @@ static unsigned long damos_va_stat(struct damon_target *target,
 	if (!mm)
 		return 0;
 
-	damon_va_walk_page_range(mm, r->ar.start, r->ar.end, &walk_ops, &priv);
+	mmap_read_lock(mm);
+	walk_page_range(mm, r->ar.start, r->ar.end, &walk_ops, &priv);
+	mmap_read_unlock(mm);
 	mmput(mm);
 	return 0;
 }
@@ -897,9 +902,6 @@ static unsigned long damon_va_apply_scheme(struct damon_ctx *ctx,
 		break;
 	case DAMOS_NOHUGEPAGE:
 		madv_action = MADV_NOHUGEPAGE;
-		break;
-	case DAMOS_COLLAPSE:
-		madv_action = MADV_COLLAPSE;
 		break;
 	case DAMOS_MIGRATE_HOT:
 	case DAMOS_MIGRATE_COLD:
@@ -960,7 +962,7 @@ static int __init damon_va_initcall(void)
 	if (err)
 		return err;
 	return damon_register_ops(&ops_fvaddr);
-}
+};
 
 subsys_initcall(damon_va_initcall);
 

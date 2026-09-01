@@ -132,17 +132,14 @@ class DamosQuota:
     goals = None                # quota goals
     goal_tuner = None           # quota goal tuner
     reset_interval_ms = None    # quota reset interval
-    fail_charge_num = None
-    fail_charge_denom = None
     weight_sz_permil = None
     weight_nr_accesses_permil = None
     weight_age_permil = None
     scheme = None               # owner scheme
 
     def __init__(self, sz=0, ms=0, goals=None, goal_tuner='consist',
-                 reset_interval_ms=0, fail_charge_num=0, fail_charge_denom=0,
-                 weight_sz_permil=0, weight_nr_accesses_permil=0,
-                 weight_age_permil=0):
+                 reset_interval_ms=0, weight_sz_permil=0,
+                 weight_nr_accesses_permil=0, weight_age_permil=0):
         self.sz = sz
         self.ms = ms
         self.reset_interval_ms = reset_interval_ms
@@ -154,8 +151,6 @@ class DamosQuota:
         for idx, goal in enumerate(self.goals):
             goal.idx = idx
             goal.quota = self
-        self.fail_charge_num = fail_charge_num
-        self.fail_charge_denom = fail_charge_denom
 
     def sysfs_dir(self):
         return os.path.join(self.scheme.sysfs_dir(), 'quotas')
@@ -202,18 +197,6 @@ class DamosQuota:
                 os.path.join(self.sysfs_dir(), 'goal_tuner'), self.goal_tuner)
         if err is not None:
             return err
-
-        err = write_file(
-                os.path.join(self.sysfs_dir(), 'fail_charge_num'),
-                self.fail_charge_num)
-        if err is not None:
-            return err
-        err = write_file(
-                os.path.join(self.sysfs_dir(), 'fail_charge_denom'),
-                self.fail_charge_denom)
-        if err is not None:
-            return err
-
         return None
 
 class DamosWatermarks:
@@ -271,7 +254,7 @@ class DamosFilter:
         self.type_ = type_
         self.matching = matching
         self.allow = allow
-        self.memcg_path = memcg_path
+        self.memcg_path = memcg_path,
         self.addr_start = addr_start
         self.addr_end = addr_end
         self.target_idx = target_idx
@@ -621,32 +604,23 @@ class DamonCtx:
     targets = None
     schemes = None
     kdamond = None
-    pause = None
     idx = None
 
-    def __init__(self, ops='paddr', monitoring_attrs=None, targets=None,
-            schemes=None, pause=False):
+    def __init__(self, ops='paddr', monitoring_attrs=DamonAttrs(), targets=[],
+            schemes=[]):
         self.ops = ops
-        if monitoring_attrs is None:
-            monitoring_attrs = DamonAttrs()
         self.monitoring_attrs = monitoring_attrs
         self.monitoring_attrs.context = self
 
-        if targets is None:
-            targets = []
         self.targets = targets
         for idx, target in enumerate(self.targets):
             target.idx = idx
             target.context = self
 
-        if schemes is None:
-            schemes = []
         self.schemes = schemes
         for idx, scheme in enumerate(self.schemes):
             scheme.idx = idx
             scheme.context = self
-
-        self.pause=pause
 
     def sysfs_dir(self):
         return os.path.join(self.kdamond.sysfs_dir(), 'contexts',
@@ -688,24 +662,17 @@ class DamonCtx:
             err = scheme.stage()
             if err is not None:
                 return err
-
-        err = write_file(os.path.join(self.sysfs_dir(), 'pause'), self.pause)
-        if err is not None:
-            return err
-
         return None
 
 class Kdamond:
     state = None
     pid = None
-    refresh_ms = None
     contexts = None
     idx = None      # index of this kdamond between siblings
     kdamonds = None # parent
 
-    def __init__(self, contexts=[], refresh_ms=None):
+    def __init__(self, contexts=[]):
         self.contexts = contexts
-        self.refresh_ms = refresh_ms
         for idx, context in enumerate(self.contexts):
             context.idx = idx
             context.kdamond = self
@@ -726,11 +693,6 @@ class Kdamond:
 
         for context in self.contexts:
             err = context.stage()
-            if err is not None:
-                return err
-        if self.refresh_ms is not None:
-            err = write_file(os.path.join(self.sysfs_dir(), 'refresh_ms'),
-                             '%d' % self.refresh_ms)
             if err is not None:
                 return err
         err = write_file(os.path.join(self.sysfs_dir(), 'state'), 'on')
@@ -844,7 +806,7 @@ class Kdamond:
                 for goal in scheme.quota.goals:
                     err = goal.stage()
                     if err is not None:
-                        print('commit_schemes_quota_goals failed staging: %s'%
+                        print('commit_schemes_quota_goals failed stagign: %s'%
                               err)
                         exit(1)
         return write_file(os.path.join(self.sysfs_dir(), 'state'),

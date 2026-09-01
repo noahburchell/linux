@@ -35,7 +35,10 @@ static const uint32_t *get_hist_rgb_luma_coefs(enum dc_color_space color_space)
 	}
 }
 
-void dpp42_dpp_cm_hist_control(struct dpp *dpp_base, struct cm_hist_control cntl, enum dc_color_space color_space)
+static void dpp42_dpp_cm_hist_control(
+	struct dpp *dpp_base,
+	struct cm_hist_control cntl,
+	enum dc_color_space color_space)
 {
 	struct dcn42_dpp *dpp = TO_DCN42_DPP(dpp_base);
 
@@ -65,7 +68,7 @@ void dpp42_dpp_cm_hist_control(struct dpp *dpp_base, struct cm_hist_control cntl
 	}
 }
 
-bool dpp42_dpp_cm_hist_read(struct dpp *dpp_base, struct cm_hist *hist_out)
+static bool dpp42_dpp_cm_hist_read(struct dpp *dpp_base, struct cm_hist *hist_out)
 {
 	struct dcn42_dpp *dpp = TO_DCN42_DPP(dpp_base);
 	uint32_t channel_mask = 0;
@@ -266,24 +269,16 @@ static void dpp42_dpp_setup(
 
 		tbl_entry.color_space = input_color_space;
 
-		if (dpp3_should_bypass_post_csc_for_colorspace(color_space))
-			select = INPUT_CSC_SELECT_BYPASS;
-		else
+		if (color_space >= COLOR_SPACE_YCBCR601)
 			select = INPUT_CSC_SELECT_ICSC;
+		else
+			select = INPUT_CSC_SELECT_BYPASS;
 
 		dpp3_program_post_csc(dpp_base, color_space, select,
 			&tbl_entry);
 	} else {
 		dpp3_program_post_csc(dpp_base, color_space, select, NULL);
 	}
-}
-static void dcn42_dpp_force_disable_cursor(struct dpp *dpp_base)
-{
-	struct dcn401_dpp *dpp = TO_DCN401_DPP(dpp_base);
-
-	/* Force disable cursor */
-	REG_UPDATE(CURSOR0_CONTROL, CUR0_ENABLE, 0);
-	dpp_base->pos.cur0_ctl.bits.cur0_enable = 0;
 }
 
 static struct dpp_funcs dcn42_dpp_funcs = {
@@ -307,7 +302,6 @@ static struct dpp_funcs dcn42_dpp_funcs = {
 	.dpp_cm_hist_control        = dpp42_dpp_cm_hist_control,
 	.dpp_cm_hist_read           = dpp42_dpp_cm_hist_read,
 	.dpp_read_reg_state			= dpp30_read_reg_state,
-	.dpp_force_disable_cursor	= dcn42_dpp_force_disable_cursor,
 };
 
 

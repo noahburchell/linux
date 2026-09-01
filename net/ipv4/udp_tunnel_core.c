@@ -97,9 +97,10 @@ void setup_udp_tunnel_sock(struct net *net, struct sock *sk,
 }
 EXPORT_SYMBOL_GPL(setup_udp_tunnel_sock);
 
-void udp_tunnel_push_rx_port(struct net_device *dev, struct sock *sk,
+void udp_tunnel_push_rx_port(struct net_device *dev, struct socket *sock,
 			     unsigned short type)
 {
+	struct sock *sk = sock->sk;
 	struct udp_tunnel_info ti;
 
 	ti.type = type;
@@ -110,9 +111,10 @@ void udp_tunnel_push_rx_port(struct net_device *dev, struct sock *sk,
 }
 EXPORT_SYMBOL_GPL(udp_tunnel_push_rx_port);
 
-void udp_tunnel_drop_rx_port(struct net_device *dev, struct sock *sk,
+void udp_tunnel_drop_rx_port(struct net_device *dev, struct socket *sock,
 			     unsigned short type)
 {
+	struct sock *sk = sock->sk;
 	struct udp_tunnel_info ti;
 
 	ti.type = type;
@@ -124,8 +126,9 @@ void udp_tunnel_drop_rx_port(struct net_device *dev, struct sock *sk,
 EXPORT_SYMBOL_GPL(udp_tunnel_drop_rx_port);
 
 /* Notify netdevs that UDP port started listening */
-void udp_tunnel_notify_add_rx_port(struct sock *sk, unsigned short type)
+void udp_tunnel_notify_add_rx_port(struct socket *sock, unsigned short type)
 {
+	struct sock *sk = sock->sk;
 	struct net *net = sock_net(sk);
 	struct udp_tunnel_info ti;
 	struct net_device *dev;
@@ -145,8 +148,9 @@ void udp_tunnel_notify_add_rx_port(struct sock *sk, unsigned short type)
 EXPORT_SYMBOL_GPL(udp_tunnel_notify_add_rx_port);
 
 /* Notify netdevs that UDP port is no more listening */
-void udp_tunnel_notify_del_rx_port(struct sock *sk, unsigned short type)
+void udp_tunnel_notify_del_rx_port(struct socket *sock, unsigned short type)
 {
+	struct sock *sk = sock->sk;
 	struct net *net = sock_net(sk);
 	struct udp_tunnel_info ti;
 	struct net_device *dev;
@@ -178,7 +182,7 @@ void udp_tunnel_xmit_skb(struct rtable *rt, struct sock *sk, struct sk_buff *skb
 
 	uh->dest = dst_port;
 	uh->source = src_port;
-	udp_set_len(uh, skb->len);
+	uh->len = htons(skb->len);
 
 	memset(&(IPCB(skb)->opt), 0, sizeof(IPCB(skb)->opt));
 
@@ -194,6 +198,7 @@ void udp_tunnel_sock_release(struct sock *sk)
 	struct socket *sock = sk->sk_socket;
 
 	rcu_assign_sk_user_data(sk, NULL);
+	synchronize_rcu();
 	kernel_sock_shutdown(sock, SHUT_RDWR);
 	sock_release(sock);
 }

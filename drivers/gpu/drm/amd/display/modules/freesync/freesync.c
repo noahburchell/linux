@@ -27,6 +27,7 @@
 #include "dc.h"
 #include "mod_freesync.h"
 #include "core_types.h"
+#include "mod_info_packet.h"
 
 #define MOD_FREESYNC_MAX_CONCURRENT_STREAMS  32
 
@@ -684,11 +685,11 @@ static void build_vrr_infopacket_data_v3(const struct mod_vrr_params *vrr,
 	/* PB8 = FreeSync Maximum refresh rate (Hz) */
 	infopacket->sb[8] = max_refresh & 0xFF;
 
-	/* PB11 : MSB FreeSync Minimum refresh rate [Hz] - bits 11:8 */
-	infopacket->sb[11] = (min_programmed >> 8) & 0x0F;
+	/* PB11 : MSB FreeSync Minimum refresh rate [Hz] - bits 9:8 */
+	infopacket->sb[11] = (min_programmed >> 8) & 0x03;
 
-	/* PB12 : MSB FreeSync Maximum refresh rate [Hz] - bits 11:8 */
-	infopacket->sb[12] = (max_refresh >> 8) & 0x0F;
+	/* PB12 : MSB FreeSync Maximum refresh rate [Hz] - bits 9:8 */
+	infopacket->sb[12] = (max_refresh >> 8) & 0x03;
 
 	/* PB16 : Reserved bits 7:1, FixedRate bit 0 */
 	infopacket->sb[16] = (vrr->state == VRR_STATE_ACTIVE_FIXED) ? 1 : 0;
@@ -967,6 +968,9 @@ void mod_freesync_build_vrr_infopacket(struct mod_freesync *mod_freesync,
 		return;
 
 	switch (packet_type) {
+	case PACKET_TYPE_VTEM:
+		mod_build_vtem_infopacket(stream, vrr, infopacket);
+		break;
 	case PACKET_TYPE_FS_V3:
 		build_vrr_infopacket_v3(stream->signal, vrr, app_tf, infopacket, stream->freesync_on_desktop);
 		break;

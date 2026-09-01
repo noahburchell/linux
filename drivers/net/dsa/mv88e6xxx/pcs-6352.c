@@ -305,16 +305,13 @@ static bool mv88e6352_pcs_link_check(struct marvell_c22_pcs *mpcs)
 	struct mv88e6xxx_port *port = mpcs->port;
 	struct mv88e6xxx_chip *chip = port->chip;
 	u8 cmode;
-	int err;
 
 	/* Port 4 can be in auto-media mode. Check that the port is
 	 * associated with the mpcs.
 	 */
 	mv88e6xxx_reg_lock(chip);
-	err = chip->info->ops->port_get_cmode(chip, port->port, &cmode);
+	chip->info->ops->port_get_cmode(chip, port->port, &cmode);
 	mv88e6xxx_reg_unlock(chip);
-	if (err)
-		return false;
 
 	return cmode == MV88E6XXX_PORT_STS_CMODE_100BASEX ||
 	       cmode == MV88E6XXX_PORT_STS_CMODE_1000BASEX ||
@@ -327,17 +324,19 @@ static int mv88e6352_pcs_init(struct mv88e6xxx_chip *chip, int port)
 	struct mii_bus *bus;
 	struct device *dev;
 	unsigned int irq;
-	int lane, err;
+	int err;
 
-	lane = mv88e6xxx_serdes_get_lane(chip, port);
-	if (lane < 0)
-		return 0;
+	mv88e6xxx_reg_lock(chip);
+	err = mv88e6352_g2_scratch_port_has_serdes(chip, port);
+	mv88e6xxx_reg_unlock(chip);
+	if (err <= 0)
+		return err;
 
 	irq = mv88e6xxx_serdes_irq_mapping(chip, port);
 	bus = mv88e6xxx_default_mdio_bus(chip);
 	dev = chip->dev;
 
-	mpcs = marvell_c22_pcs_alloc(dev, bus, lane);
+	mpcs = marvell_c22_pcs_alloc(dev, bus, MV88E6352_ADDR_SERDES);
 	if (!mpcs)
 		return -ENOMEM;
 

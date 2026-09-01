@@ -255,12 +255,9 @@ static void finish_netfs_read(struct ceph_osd_request *req)
 	}
 
 	if (osd_data->type == CEPH_OSD_DATA_TYPE_PAGES) {
-		int num_pages = calc_pages_for(osd_data->alignment,
-					       osd_data->length);
-
-		for (int i = 0; i < num_pages; i++)
-			put_page(osd_data->pages[i]);
-		kvfree(osd_data->pages);
+		ceph_put_page_vector(osd_data->pages,
+				     calc_pages_for(osd_data->alignment,
+					osd_data->length), false);
 	}
 	if (err > 0) {
 		ceph_subvolume_metrics_record_io(fsc->mdsc, ceph_inode(inode),
@@ -1429,16 +1426,6 @@ void ceph_shift_unused_folios_left(struct folio_batch *fbatch)
 	fbatch->nr = n;
 }
 
-static void ceph_undo_wrbuffer_claim(struct inode *inode, struct folio *folio)
-{
-	struct ceph_snap_context *snapc = folio_detach_private(folio);
-
-	if (!snapc)
-		return;
-	ceph_put_wrbuffer_cap_refs(ceph_inode(inode), 1, snapc);
-	ceph_put_snap_context(snapc);
-}
-
 static
 int ceph_submit_write(struct address_space *mapping,
 			struct writeback_control *wbc,
@@ -1502,7 +1489,6 @@ new_request:
 			if (!page)
 				continue;
 
-			ceph_undo_wrbuffer_claim(inode, page_folio(page));
 			redirty_page_for_writepage(wbc, page);
 			unlock_page(page);
 		}
@@ -2478,7 +2464,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	}
 
 	rd_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL,
-					 1, false, GFP_KERNEL);
+					 1, false, GFP_NOFS);
 	if (!rd_req) {
 		err = -ENOMEM;
 		goto out_unlock;
@@ -2491,12 +2477,12 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 		rd_req->r_base_oloc.pool_ns = ceph_get_string(pool_ns);
 	ceph_oid_printf(&rd_req->r_base_oid, "%llx.00000000", ci->i_vino.ino);
 
-	err = ceph_osdc_alloc_messages(rd_req, GFP_KERNEL);
+	err = ceph_osdc_alloc_messages(rd_req, GFP_NOFS);
 	if (err)
 		goto out_unlock;
 
 	wr_req = ceph_osdc_alloc_request(&fsc->client->osdc, NULL,
-					 1, false, GFP_KERNEL);
+					 1, false, GFP_NOFS);
 	if (!wr_req) {
 		err = -ENOMEM;
 		goto out_unlock;
@@ -2507,7 +2493,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	ceph_oloc_copy(&wr_req->r_base_oloc, &rd_req->r_base_oloc);
 	ceph_oid_copy(&wr_req->r_base_oid, &rd_req->r_base_oid);
 
-	err = ceph_osdc_alloc_messages(wr_req, GFP_KERNEL);
+	err = ceph_osdc_alloc_messages(wr_req, GFP_NOFS);
 	if (err)
 		goto out_unlock;
 
@@ -2546,7 +2532,7 @@ static int __ceph_pool_perm_get(struct ceph_inode_info *ci,
 	}
 
 	pool_ns_len = pool_ns ? pool_ns->len : 0;
-	perm = kmalloc_flex(*perm, pool_ns, pool_ns_len + 1, GFP_KERNEL);
+	perm = kmalloc_flex(*perm, pool_ns, pool_ns_len + 1, GFP_NOFS);
 	if (!perm) {
 		err = -ENOMEM;
 		goto out_unlock;
@@ -2584,8 +2570,7 @@ int ceph_pool_perm_check(struct inode *inode, int need)
 	struct ceph_inode_info *ci = ceph_inode(inode);
 	struct ceph_string *pool_ns;
 	s64 pool;
-	int ret;
-	unsigned long flags;
+	int ret, flags;
 
 	/* Only need to do this for regular files */
 	if (!S_ISREG(inode->i_mode))
@@ -2627,19 +2612,20 @@ check:
 	if (ret < 0)
 		return ret;
 
+	flags = CEPH_I_POOL_PERM;
+	if (ret & POOL_READ)
+		flags |= CEPH_I_POOL_RD;
+	if (ret & POOL_WRITE)
+		flags |= CEPH_I_POOL_WR;
+
 	spin_lock(&ci->i_ceph_lock);
 	if (pool == ci->i_layout.pool_id &&
 	    pool_ns == rcu_dereference_raw(ci->i_layout.pool_ns)) {
-		set_bit(CEPH_I_POOL_PERM_BIT, &ci->i_ceph_flags);
-		if (ret & POOL_READ)
-			set_bit(CEPH_I_POOL_RD_BIT, &ci->i_ceph_flags);
-		if (ret & POOL_WRITE)
-			set_bit(CEPH_I_POOL_WR_BIT, &ci->i_ceph_flags);
-	} else {
+		ci->i_ceph_flags |= flags;
+        } else {
 		pool = ci->i_layout.pool_id;
+		flags = ci->i_ceph_flags;
 	}
-	/* Re-read flags under the lock so check: sees the updated bits. */
-	flags = ci->i_ceph_flags;
 	spin_unlock(&ci->i_ceph_lock);
 	goto check;
 }

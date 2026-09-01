@@ -230,8 +230,6 @@ int main(int argc, char *argv[])
 	void *map_ptr;
 	unsigned long map_size;
 
-	ksft_print_header();
-
 	err = mte_default_setup();
 	if (err)
 		return err;

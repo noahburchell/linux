@@ -708,7 +708,7 @@ void pwrseq_put(struct pwrseq_desc *desc)
 	pwrseq = desc->pwrseq;
 
 	if (desc->powered_on)
-		pwrseq_disable(desc);
+		pwrseq_power_off(desc);
 
 	kfree(desc);
 	module_put(pwrseq->owner);
@@ -874,7 +874,7 @@ static int pwrseq_unit_disable(struct pwrseq_device *pwrseq,
 }
 
 /**
- * pwrseq_enable() - Issue a power-on request on behalf of the consumer
+ * pwrseq_power_on() - Issue a power-on request on behalf of the consumer
  *                     device.
  * @desc: Descriptor referencing the power sequencer.
  *
@@ -887,7 +887,7 @@ static int pwrseq_unit_disable(struct pwrseq_device *pwrseq,
  * Returns:
  * 0 on success, negative error number on failure.
  */
-int pwrseq_enable(struct pwrseq_desc *desc)
+int pwrseq_power_on(struct pwrseq_desc *desc)
 {
 	struct pwrseq_device *pwrseq;
 	struct pwrseq_target *target;
@@ -925,14 +925,14 @@ int pwrseq_enable(struct pwrseq_desc *desc)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(pwrseq_enable);
+EXPORT_SYMBOL_GPL(pwrseq_power_on);
 
 /**
- * pwrseq_disable() - Issue a power-off request on behalf of the consumer
+ * pwrseq_power_off() - Issue a power-off request on behalf of the consumer
  *                      device.
  * @desc: Descriptor referencing the power sequencer.
  *
- * This undoes the effects of pwrseq_enable(). It issues a power-off request
+ * This undoes the effects of pwrseq_power_on(). It issues a power-off request
  * on behalf of the consumer and when the last remaining user does so, the
  * power-down sequence will be started. If one is in progress, the function
  * will block until it's complete and then return.
@@ -940,7 +940,7 @@ EXPORT_SYMBOL_GPL(pwrseq_enable);
  * Returns:
  * 0 on success, negative error number on failure.
  */
-int pwrseq_disable(struct pwrseq_desc *desc)
+int pwrseq_power_off(struct pwrseq_desc *desc)
 {
 	struct pwrseq_device *pwrseq;
 	struct pwrseq_unit *unit;
@@ -966,30 +966,7 @@ int pwrseq_disable(struct pwrseq_desc *desc)
 
 	return ret;
 }
-EXPORT_SYMBOL_GPL(pwrseq_disable);
-
-/**
- * pwrseq_to_device() - Get the pwrseq device pointer from a descriptor.
- * @desc: Descriptor referencing the power sequencer.
- *
- * Return the 'dev' pointer of the power sequencer device associated with @desc.
- * Consumer drivers can use this to query the pwrseq provider's device tree
- * node, for example to check for the existence of specific properties.
- *
- * Since pwrseq_get() already takes a reference to the pwrseq device, this
- * function does not take an additional reference.
- *
- * Returns:
- * Pointer to the pwrseq struct device, or NULL if @desc is NULL.
- */
-struct device *pwrseq_to_device(struct pwrseq_desc *desc)
-{
-	if (!desc)
-		return NULL;
-
-	return &desc->pwrseq->dev;
-}
-EXPORT_SYMBOL_GPL(pwrseq_to_device);
+EXPORT_SYMBOL_GPL(pwrseq_power_off);
 
 #if IS_ENABLED(CONFIG_DEBUG_FS)
 
@@ -1071,7 +1048,7 @@ static int pwrseq_debugfs_seq_show(struct seq_file *seq, void *data)
 	struct pwrseq_target *target;
 	struct pwrseq_unit *unit;
 
-	seq_printf(seq, "%s (%s):\n", dev_name(dev), dev_name(dev->parent));
+	seq_printf(seq, "%s:\n", dev_name(dev));
 
 	seq_puts(seq, "  targets:\n");
 	list_for_each_entry(target, &pwrseq->targets, list)

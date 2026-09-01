@@ -2,7 +2,6 @@
 #ifndef __UNWIND_H
 #define __UNWIND_H
 
-#include <stdint.h>
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include "map_symbol.h"
@@ -18,6 +17,15 @@ struct unwind_entry {
 };
 
 typedef int (*unwind_entry_cb_t)(struct unwind_entry *entry, void *arg);
+
+struct unwind_libunwind_ops {
+	int (*prepare_access)(struct maps *maps);
+	void (*flush_access)(struct maps *maps);
+	void (*finish_access)(struct maps *maps);
+	int (*get_entries)(unwind_entry_cb_t cb, void *arg,
+			   struct thread *thread,
+			   struct perf_sample *data, int max_stack, bool best_effort);
+};
 
 int unwind__configure(const char *var, const char *value, void *cb);
 int unwind__option(const struct option *opt, const char *arg, int unset);
@@ -56,7 +64,12 @@ int libunwind__get_entries(unwind_entry_cb_t cb, void *arg,
 			   struct thread *thread,
 			   struct perf_sample *data, int max_stack,
 			   bool best_effort);
-int unwind__prepare_access(struct maps *maps, uint16_t e_machine);
+#ifndef LIBUNWIND__ARCH_REG_ID
+#define LIBUNWIND__ARCH_REG_ID(regnum) libunwind__arch_reg_id(regnum)
+#endif
+
+int LIBUNWIND__ARCH_REG_ID(int regnum);
+int unwind__prepare_access(struct maps *maps, struct map *map, bool *initialized);
 void unwind__flush_access(struct maps *maps);
 void unwind__finish_access(struct maps *maps);
 #else
@@ -73,7 +86,8 @@ static inline int libunwind__get_entries(unwind_entry_cb_t cb __maybe_unused,
 }
 
 static inline int unwind__prepare_access(struct maps *maps __maybe_unused,
-					 uint16_t e_machine __maybe_unused)
+					 struct map *map __maybe_unused,
+					 bool *initialized __maybe_unused)
 {
 	return 0;
 }

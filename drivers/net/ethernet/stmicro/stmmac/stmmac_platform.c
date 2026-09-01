@@ -130,6 +130,7 @@ static struct stmmac_axi *stmmac_axi_setup(struct platform_device *pdev)
 static int stmmac_mtl_setup(struct platform_device *pdev,
 			    struct plat_stmmacenet_data *plat)
 {
+	struct device_node *q_node;
 	struct device_node *rx_node;
 	struct device_node *tx_node;
 	u8 queue = 0;
@@ -155,8 +156,8 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 
 	/* Processing RX queues common config */
 	if (!of_property_read_u32(rx_node, "snps,rx-queues-to-use", &value)) {
-		if (value > MTL_MAX_RX_QUEUES)
-			value = MTL_MAX_RX_QUEUES;
+		if (value > U8_MAX)
+			value = U8_MAX;
 		plat->rx_queues_to_use = value;
 	}
 
@@ -168,7 +169,7 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 		plat->rx_sched_algorithm = MTL_RX_ALGORITHM_SP;
 
 	/* Processing individual RX queue config */
-	for_each_child_of_node_scoped(rx_node, q_node) {
+	for_each_child_of_node(rx_node, q_node) {
 		if (queue >= plat->rx_queues_to_use)
 			break;
 
@@ -209,8 +210,8 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 
 	/* Processing TX queues common config */
 	if (!of_property_read_u32(tx_node, "snps,tx-queues-to-use", &value)) {
-		if (value > MTL_MAX_TX_QUEUES)
-			value = MTL_MAX_TX_QUEUES;
+		if (value > U8_MAX)
+			value = U8_MAX;
 		plat->tx_queues_to_use = value;
 	}
 
@@ -226,7 +227,7 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 	queue = 0;
 
 	/* Processing individual TX queue config */
-	for_each_child_of_node_scoped(tx_node, q_node) {
+	for_each_child_of_node(tx_node, q_node) {
 		if (queue >= plat->tx_queues_to_use)
 			break;
 
@@ -275,6 +276,7 @@ static int stmmac_mtl_setup(struct platform_device *pdev,
 out:
 	of_node_put(rx_node);
 	of_node_put(tx_node);
+	of_node_put(q_node);
 
 	return ret;
 }

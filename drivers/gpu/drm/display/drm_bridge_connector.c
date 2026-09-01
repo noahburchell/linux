@@ -147,7 +147,7 @@ static void drm_bridge_connector_hpd_notify(struct drm_connector *connector,
 		to_drm_bridge_connector(connector);
 
 	/* Notify all bridges in the pipeline of hotplug events. */
-	drm_for_each_bridge_in_chain(bridge_connector->encoder, bridge) {
+	drm_for_each_bridge_in_chain_scoped(bridge_connector->encoder, bridge) {
 		if (bridge->funcs->hpd_notify)
 			bridge->funcs->hpd_notify(bridge, connector, status);
 	}
@@ -265,57 +265,26 @@ static void drm_bridge_connector_debugfs_init(struct drm_connector *connector,
 	}
 }
 
-static struct drm_connector_state *
-drm_bridge_connector_create_state(struct drm_connector *connector)
+static void drm_bridge_connector_reset(struct drm_connector *connector)
 {
 	struct drm_bridge_connector *bridge_connector =
 		to_drm_bridge_connector(connector);
-	struct drm_connector_state *conn_state;
 
-	conn_state = drm_atomic_helper_connector_create_state(connector);
-	if (IS_ERR(conn_state))
-		return conn_state;
-
+	drm_atomic_helper_connector_reset(connector);
 	if (bridge_connector->bridge_hdmi)
-		__drm_atomic_helper_connector_hdmi_state_init(connector,
-							      conn_state);
-
-	return conn_state;
-}
-
-static enum drm_connector_color_format
-drm_bridge_connector_color_format(const struct drm_connector_state *conn_state)
-{
-	struct drm_bridge_connector *bridge_connector =
-		to_drm_bridge_connector(conn_state->connector);
-
-	if (bridge_connector->bridge_hdmi) {
-		switch (conn_state->hdmi.output_format) {
-		default:
-		case DRM_OUTPUT_COLOR_FORMAT_RGB444:
-			return DRM_CONNECTOR_COLOR_FORMAT_RGB444;
-		case DRM_OUTPUT_COLOR_FORMAT_YCBCR444:
-			return DRM_CONNECTOR_COLOR_FORMAT_YCBCR444;
-		case DRM_OUTPUT_COLOR_FORMAT_YCBCR422:
-			return DRM_CONNECTOR_COLOR_FORMAT_YCBCR422;
-		case DRM_OUTPUT_COLOR_FORMAT_YCBCR420:
-			return DRM_CONNECTOR_COLOR_FORMAT_YCBCR420;
-		}
-	}
-
-	return conn_state->color_format;
+		__drm_atomic_helper_connector_hdmi_reset(connector,
+							 connector->state);
 }
 
 static const struct drm_connector_funcs drm_bridge_connector_funcs = {
+	.reset = drm_bridge_connector_reset,
 	.detect = drm_bridge_connector_detect,
 	.force = drm_bridge_connector_force,
 	.fill_modes = drm_helper_probe_single_connector_modes,
-	.atomic_create_state = drm_bridge_connector_create_state,
 	.atomic_duplicate_state = drm_atomic_helper_connector_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_connector_destroy_state,
 	.debugfs_init = drm_bridge_connector_debugfs_init,
 	.oob_hotplug_event = drm_bridge_connector_oob_hotplug_event,
-	.color_format = drm_bridge_connector_color_format,
 };
 
 /* -----------------------------------------------------------------------------
@@ -402,7 +371,7 @@ drm_bridge_connector_mode_valid(struct drm_connector *connector,
 }
 
 static int drm_bridge_connector_atomic_check(struct drm_connector *connector,
-					     struct drm_atomic_commit *state)
+					     struct drm_atomic_state *state)
 {
 	struct drm_bridge_connector *bridge_connector =
 		to_drm_bridge_connector(connector);
@@ -804,11 +773,8 @@ static void drm_bridge_connector_put_bridges(struct drm_device *dev, void *data)
  * @drm: the DRM device
  * @encoder: the encoder where the bridge chain starts
  *
- * Create a new &drm_bridge_connector for the @drm device. The connector is
- * allocated, initialised, registered with the @drm device and attached to
- * @encoder.
- *
- * The connector is associated with a chain of bridges that starts at
+ * Allocate, initialise and register a &drm_bridge_connector with the @drm
+ * device. The connector is associated with a chain of bridges that starts at
  * the @encoder. All bridges in the chain shall report bridge operation flags
  * (&drm_bridge->ops) and bridge output type (&drm_bridge->type), and none of
  * them may create a DRM connector directly.
@@ -854,7 +820,7 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 	 * detection are available, we don't support hotplug detection at all.
 	 */
 	connector_type = DRM_MODE_CONNECTOR_Unknown;
-	drm_for_each_bridge_in_chain(encoder, bridge) {
+	drm_for_each_bridge_in_chain_scoped(encoder, bridge) {
 		if (!bridge->interlace_allowed)
 			connector->interlace_allowed = false;
 		if (!bridge->ycbcr_420_allowed)
@@ -1088,10 +1054,6 @@ struct drm_connector *drm_bridge_connector_init(struct drm_device *drm,
 	if (support_hdcp && IS_REACHABLE(CONFIG_DRM_DISPLAY_HELPER) &&
 	    IS_ENABLED(CONFIG_DRM_DISPLAY_HDCP_HELPER))
 		drm_connector_attach_content_protection_property(connector, true);
-
-	ret = drm_connector_attach_encoder(connector, encoder);
-	if (ret)
-		return ERR_PTR(ret);
 
 	return connector;
 }

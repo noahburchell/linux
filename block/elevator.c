@@ -740,6 +740,19 @@ void elevator_set_default(struct request_queue *q)
 	if (q->tag_set->flags & BLK_MQ_F_NO_SCHED_BY_DEFAULT)
 		return;
 
+#ifdef CONFIG_MQ_IOSCHED_DEFAULT_ADIOS
+	ctx.name = "adios";
+#else // !CONFIG_MQ_IOSCHED_DEFAULT_ADIOS
+	bool is_sq = q->nr_hw_queues == 1 || blk_mq_is_shared_tags(q->tag_set->flags);
+#if defined(CONFIG_CACHY) && defined(CONFIG_IOSCHED_BFQ)
+	if (is_sq)
+		ctx.name = "bfq";
+#else
+	if (!is_sq)
+		return;
+#endif /* CONFIG_CACHY && CONFIG_IOSCHED_BFQ */
+#endif // CONFIG_MQ_IOSCHED_DEFAULT_ADIOS
+
 	/*
 	 * For single queue devices, default to using mq-deadline. If we
 	 * have multiple queues or mq-deadline is not available, default
@@ -749,13 +762,10 @@ void elevator_set_default(struct request_queue *q)
 	if (!ctx.type)
 		return;
 
-	if ((q->nr_hw_queues == 1 ||
-			blk_mq_is_shared_tags(q->tag_set->flags))) {
-		err = elevator_change(q, &ctx);
-		if (err < 0)
-			pr_warn("\"%s\" elevator initialization, failed %d, falling back to \"none\"\n",
-					ctx.name, err);
-	}
+	err = elevator_change(q, &ctx);
+	if (err < 0)
+		pr_warn("\"%s\" elevator initialization, failed %d, falling back to \"none\"\n",
+				ctx.name, err);
 	elevator_put(ctx.type);
 }
 
@@ -812,13 +822,8 @@ ssize_t elv_iosched_store(struct gendisk *disk, const char *buf,
 	 * reference during concurrent disk deletion:
 	 *   update_nr_hwq_lock -> kn->active (via del_gendisk -> kobject_del)
 	 *   kn->active -> update_nr_hwq_lock (via this sysfs write path)
-	 *
-	 * Use the writer lock instead of the reader lock of update_nr_hwq_lock
-	 * to serialize the two-stage elevator switch steps in
-	 * elevator_change(): the core switch step under the elevator lock and
-	 * the elevator_change_done() step outside the elevator lock.
 	 */
-	if (!down_write_trylock(&set->update_nr_hwq_lock)) {
+	if (!down_read_trylock(&set->update_nr_hwq_lock)) {
 		ret = -EBUSY;
 		goto out;
 	}
@@ -829,7 +834,7 @@ ssize_t elv_iosched_store(struct gendisk *disk, const char *buf,
 	} else {
 		ret = -ENOENT;
 	}
-	up_write(&set->update_nr_hwq_lock);
+	up_read(&set->update_nr_hwq_lock);
 
 out:
 	if (ctx.type)

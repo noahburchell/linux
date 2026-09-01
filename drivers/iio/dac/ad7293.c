@@ -11,6 +11,7 @@
 #include <linux/device.h>
 #include <linux/gpio/consumer.h>
 #include <linux/iio/iio.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/regulator/consumer.h>
 #include <linux/spi/spi.h>
@@ -869,7 +870,7 @@ static int ad7293_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id ad7293_id[] = {
-	{ .name = "ad7293" },
+	{ "ad7293", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ad7293_id);

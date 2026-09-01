@@ -454,6 +454,7 @@ static void hif_usb_stop(void *hif_handle)
 		usb_kill_urb(tx_buf->urb);
 		list_del(&tx_buf->list);
 		usb_free_urb(tx_buf->urb);
+		kfree(tx_buf->buf);
 		kfree(tx_buf);
 		spin_lock_irqsave(&hif_dev->tx.tx_lock, flags);
 	}
@@ -810,6 +811,7 @@ static void ath9k_hif_usb_dealloc_tx_urbs(struct hif_device_usb *hif_dev)
 				 &hif_dev->tx.tx_buf, list) {
 		list_del(&tx_buf->list);
 		usb_free_urb(tx_buf->urb);
+		kfree(tx_buf->buf);
 		kfree(tx_buf);
 	}
 	spin_unlock_irqrestore(&hif_dev->tx.tx_lock, flags);
@@ -826,6 +828,7 @@ static void ath9k_hif_usb_dealloc_tx_urbs(struct hif_device_usb *hif_dev)
 		usb_kill_urb(tx_buf->urb);
 		list_del(&tx_buf->list);
 		usb_free_urb(tx_buf->urb);
+		kfree(tx_buf->buf);
 		kfree(tx_buf);
 		spin_lock_irqsave(&hif_dev->tx.tx_lock, flags);
 	}
@@ -846,8 +849,12 @@ static int ath9k_hif_usb_alloc_tx_urbs(struct hif_device_usb *hif_dev)
 	init_usb_anchor(&hif_dev->mgmt_submitted);
 
 	for (i = 0; i < MAX_TX_URB_NUM; i++) {
-		tx_buf = kzalloc_flex(*tx_buf, buf, MAX_TX_BUF_SIZE);
+		tx_buf = kzalloc_obj(*tx_buf);
 		if (!tx_buf)
+			goto err;
+
+		tx_buf->buf = kzalloc(MAX_TX_BUF_SIZE, GFP_KERNEL);
+		if (!tx_buf->buf)
 			goto err;
 
 		tx_buf->urb = usb_alloc_urb(0, GFP_KERNEL);
@@ -864,7 +871,10 @@ static int ath9k_hif_usb_alloc_tx_urbs(struct hif_device_usb *hif_dev)
 
 	return 0;
 err:
-	kfree(tx_buf);
+	if (tx_buf) {
+		kfree(tx_buf->buf);
+		kfree(tx_buf);
+	}
 	ath9k_hif_usb_dealloc_tx_urbs(hif_dev);
 	return -ENOMEM;
 }
@@ -1087,7 +1097,7 @@ static int ath9k_hif_usb_download_fw(struct hif_device_usb *hif_dev)
 	}
 	kfree(buf);
 
-	if (IS_AR7010_DEVICE(hif_dev->id_info))
+	if (IS_AR7010_DEVICE(hif_dev->usb_device_id->driver_info))
 		firm_offset = AR7010_FIRMWARE_TEXT;
 	else
 		firm_offset = AR9271_FIRMWARE_TEXT;
@@ -1182,7 +1192,7 @@ static int ath9k_hif_request_firmware(struct hif_device_usb *hif_dev,
 	if (MAJOR_VERSION_REQ == 1 && hif_dev->fw_minor_index == 3) {
 		const char *filename;
 
-		if (IS_AR7010_DEVICE(hif_dev->id_info))
+		if (IS_AR7010_DEVICE(hif_dev->usb_device_id->driver_info))
 			filename = FIRMWARE_AR7010_1_1;
 		else
 			filename = FIRMWARE_AR9271;
@@ -1198,7 +1208,7 @@ static int ath9k_hif_request_firmware(struct hif_device_usb *hif_dev,
 
 		return -ENOENT;
 	} else {
-		if (IS_AR7010_DEVICE(hif_dev->id_info))
+		if (IS_AR7010_DEVICE(hif_dev->usb_device_id->driver_info))
 			chip = "7010";
 		else
 			chip = "9271";
@@ -1255,9 +1265,9 @@ static void ath9k_hif_usb_firmware_cb(const struct firmware *fw, void *context)
 
 	ret = ath9k_htc_hw_init(hif_dev->htc_handle,
 				&hif_dev->interface->dev,
-				le16_to_cpu(hif_dev->udev->descriptor.idProduct),
+				hif_dev->usb_device_id->idProduct,
 				hif_dev->udev->product,
-				hif_dev->id_info);
+				hif_dev->usb_device_id->driver_info);
 	if (ret) {
 		ret = -EINVAL;
 		goto err_htc_hw_init;
@@ -1369,7 +1379,7 @@ static int ath9k_hif_usb_probe(struct usb_interface *interface,
 
 	hif_dev->udev = udev;
 	hif_dev->interface = interface;
-	hif_dev->id_info = id->driver_info;
+	hif_dev->usb_device_id = id;
 #ifdef CONFIG_PM
 	udev->reset_resume = 1;
 #endif
@@ -1515,4 +1525,12 @@ static struct usb_driver ath9k_hif_usb_driver = {
 	.disable_hub_initiated_lpm = 1,
 };
 
-module_usb_driver(ath9k_hif_usb_driver);
+int ath9k_hif_usb_init(void)
+{
+	return usb_register(&ath9k_hif_usb_driver);
+}
+
+void ath9k_hif_usb_exit(void)
+{
+	usb_deregister(&ath9k_hif_usb_driver);
+}

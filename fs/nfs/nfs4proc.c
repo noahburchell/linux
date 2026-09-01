@@ -225,9 +225,8 @@ const u32 nfs4_fattr_bitmap[3] = {
 	| FATTR4_WORD1_TIME_METADATA
 	| FATTR4_WORD1_TIME_MODIFY
 	| FATTR4_WORD1_MOUNTED_ON_FILEID,
-	FATTR4_WORD2_UNCACHEABLE_FILE_DATA
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
-	| FATTR4_WORD2_SECURITY_LABEL
+	FATTR4_WORD2_SECURITY_LABEL
 #endif
 };
 
@@ -251,7 +250,6 @@ static const u32 nfs4_pnfs_open_bitmap[3] = {
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
 	| FATTR4_WORD2_SECURITY_LABEL
 #endif
-	| FATTR4_WORD2_UNCACHEABLE_FILE_DATA
 };
 
 static const u32 nfs4_open_noattr_bitmap[3] = {
@@ -308,15 +306,6 @@ static void nfs4_bitmap_copy_adjust(__u32 *dst, const __u32 *src,
 	unsigned long cache_validity;
 
 	memcpy(dst, src, NFS4_BITMASK_SZ*sizeof(*dst));
-	/*
-	 * The uncacheable_file_data attribute applies only to regular files
-	 * (NF4REG); a server must reject a query of it on any other object
-	 * type with NFS4ERR_INVAL.  Never request it unless the target is
-	 * known to be a regular file (callers with an unknown object type,
-	 * e.g. LOOKUP, pass a NULL inode).
-	 */
-	if (!inode || !S_ISREG(inode->i_mode))
-		dst[2] &= ~FATTR4_WORD2_UNCACHEABLE_FILE_DATA;
 	if (!inode || !nfs_have_read_or_write_delegation(inode))
 		return;
 
@@ -337,9 +326,6 @@ static void nfs4_bitmap_copy_adjust(__u32 *dst, const __u32 *src,
 
 	if (!(cache_validity & NFS_INO_INVALID_BTIME))
 		dst[1] &= ~FATTR4_WORD1_TIME_CREATE;
-
-	if (!(cache_validity & NFS_INO_INVALID_UNCACHEABLE_FILE_DATA))
-		dst[2] &= ~FATTR4_WORD2_UNCACHEABLE_FILE_DATA;
 
 	if (nfs_have_delegated_mtime(inode)) {
 		if (!(cache_validity & NFS_INO_INVALID_ATIME))
@@ -391,7 +377,7 @@ static void nfs4_setup_readdir(u64 cookie, __be32 *verifier, struct dentry *dent
 		*p++ = htonl(attrs);                           /* bitmap */
 		*p++ = htonl(12);             /* attribute buffer length */
 		*p++ = htonl(NF4DIR);
-		p = xdr_encode_hyper(p, d_inode(dentry)->i_ino);
+		p = xdr_encode_hyper(p, NFS_FILEID(d_inode(dentry)));
 	}
 	
 	*p++ = xdr_one;                                  /* next */
@@ -405,7 +391,7 @@ static void nfs4_setup_readdir(u64 cookie, __be32 *verifier, struct dentry *dent
 	*p++ = htonl(12);             /* attribute buffer length */
 	*p++ = htonl(NF4DIR);
 	spin_lock(&dentry->d_lock);
-	p = xdr_encode_hyper(p, d_inode(dentry->d_parent)->i_ino);
+	p = xdr_encode_hyper(p, NFS_FILEID(d_inode(dentry->d_parent)));
 	spin_unlock(&dentry->d_lock);
 
 	readdir->pgbase = (char *)p - (char *)start;
@@ -3853,16 +3839,6 @@ nfs4_atomic_open(struct inode *dir, struct nfs_open_context *ctx,
 
 	if (IS_ERR(state))
 		return ERR_CAST(state);
-
-	/*
-	 * Use O_DIRECT if file was marked as Uncacheable, see:
-	 * https://datatracker.ietf.org/doc/draft-ietf-nfsv4-uncacheable-files/
-	 */
-	if (!(open_flags & O_DIRECT) && NFS_I(state->inode)->uncacheable_file_data) {
-		if (!(open_flags & O_APPEND))
-			set_bit(NFS_CONTEXT_O_DIRECT, &ctx->flags);
-	}
-
 	return state->inode;
 }
 
@@ -3881,7 +3857,7 @@ static void nfs4_close_context(struct nfs_open_context *ctx, int is_sync)
 
 #define FATTR4_WORD1_NFS40_MASK (2*FATTR4_WORD1_MOUNTED_ON_FILEID - 1UL)
 #define FATTR4_WORD2_NFS41_MASK (2*FATTR4_WORD2_SUPPATTR_EXCLCREAT - 1UL)
-#define FATTR4_WORD2_NFS42_MASK (2*FATTR4_WORD2_UNCACHEABLE_FILE_DATA - 1UL)
+#define FATTR4_WORD2_NFS42_MASK (2*FATTR4_WORD2_OPEN_ARGUMENTS - 1UL)
 
 #define FATTR4_WORD2_NFS42_TIME_DELEG_MASK \
 	(FATTR4_WORD2_TIME_DELEG_MODIFY|FATTR4_WORD2_TIME_DELEG_ACCESS)
@@ -3957,8 +3933,7 @@ static int _nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *f
 		server->caps &=
 			~(NFS_CAP_ACLS | NFS_CAP_HARDLINKS | NFS_CAP_SYMLINKS |
 			  NFS_CAP_SECURITY_LABEL | NFS_CAP_FS_LOCATIONS |
-			  NFS_CAP_OPEN_XOR | NFS_CAP_DELEGTIME |
-			  NFS_CAP_CASE_INSENSITIVE | NFS_CAP_CASE_NONPRESERVING);
+			  NFS_CAP_OPEN_XOR | NFS_CAP_DELEGTIME);
 		server->fattr_valid = NFS_ATTR_FATTR_V4;
 		if (res.attr_bitmask[0] & FATTR4_WORD0_ACL &&
 				res.acl_bitmask & ACL4_SUPPORT_ALLOW_ACL)
@@ -3969,9 +3944,8 @@ static int _nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *f
 			server->caps |= NFS_CAP_SYMLINKS;
 		if (res.case_insensitive)
 			server->caps |= NFS_CAP_CASE_INSENSITIVE;
-		if ((res.attr_bitmask[0] & FATTR4_WORD0_CASE_PRESERVING) &&
-		    !res.case_preserving)
-			server->caps |= NFS_CAP_CASE_NONPRESERVING;
+		if (res.case_preserving)
+			server->caps |= NFS_CAP_CASE_PRESERVING;
 #ifdef CONFIG_NFS_V4_SECURITY_LABEL
 		if (res.attr_bitmask[2] & FATTR4_WORD2_SECURITY_LABEL)
 			server->caps |= NFS_CAP_SECURITY_LABEL;
@@ -4005,8 +3979,6 @@ static int _nfs4_server_capabilities(struct nfs_server *server, struct nfs_fh *f
 		memcpy(server->attr_bitmask_nl, res.attr_bitmask,
 				sizeof(server->attr_bitmask));
 		server->attr_bitmask_nl[2] &= ~FATTR4_WORD2_SECURITY_LABEL;
-		if (!(res.attr_bitmask[2] & FATTR4_WORD2_UNCACHEABLE_FILE_DATA))
-			server->fattr_valid &= ~NFS_ATTR_FATTR_UNCACHEABLE_FILE_DATA;
 
 		if (res.open_caps.oa_share_access_want[0] &
 		    NFS4_SHARE_WANT_OPEN_XOR_DELEGATION)
@@ -4617,7 +4589,6 @@ static int _nfs4_proc_lookup(struct rpc_clnt *clnt, struct inode *dir,
 		.rpc_resp = &res,
 	};
 	unsigned short task_flags = 0;
-	__u32 bitmask[NFS4_BITMASK_SZ];
 
 	if (nfs_server_capable(dir, NFS_CAP_MOVEABLE))
 		task_flags = RPC_TASK_MOVEABLE;
@@ -4626,13 +4597,7 @@ static int _nfs4_proc_lookup(struct rpc_clnt *clnt, struct inode *dir,
 	if (nfs_lookup_is_soft_revalidate(dentry))
 		task_flags |= RPC_TASK_TIMEOUT;
 
-	/*
-	 * The looked-up object's type is unknown here, so gate out the
-	 * regular-file-only uncacheable_file_data attribute (NULL inode).
-	 */
-	nfs4_bitmap_copy_adjust(bitmask, nfs4_bitmask(server, fattr->label),
-				NULL, 0);
-	args.bitmask = bitmask;
+	args.bitmask = nfs4_bitmask(server, fattr->label);
 
 	nfs_fattr_init(fattr);
 
@@ -4746,20 +4711,13 @@ static int _nfs4_proc_lookupp(struct inode *inode,
 		.rpc_resp = &res,
 	};
 	unsigned short task_flags = 0;
-	__u32 bitmask[NFS4_BITMASK_SZ];
 
 	if (server->flags & NFS_MOUNT_SOFTREVAL)
 		task_flags |= RPC_TASK_TIMEOUT;
 	if (server->caps & NFS_CAP_MOVEABLE)
 		task_flags |= RPC_TASK_MOVEABLE;
 
-	/*
-	 * The looked-up object's type is unknown here, so gate out the
-	 * regular-file-only uncacheable_file_data attribute (NULL inode).
-	 */
-	nfs4_bitmap_copy_adjust(bitmask, nfs4_bitmask(server, fattr->label),
-				NULL, 0);
-	args.bitmask = bitmask;
+	args.bitmask = nfs4_bitmask(server, fattr->label);
 
 	nfs_fattr_init(fattr);
 	nfs4_init_sequence(server->nfs_client, &args.seq_args, &res.seq_res, 0, 0);
@@ -5174,7 +5132,6 @@ struct nfs4_createdata {
 	struct nfs4_create_res res;
 	struct nfs_fh fh;
 	struct nfs_fattr fattr;
-	u32 bitmask[NFS4_BITMASK_SZ];
 };
 
 static struct nfs4_createdata *nfs4_alloc_createdata(struct inode *dir,
@@ -5198,14 +5155,7 @@ static struct nfs4_createdata *nfs4_alloc_createdata(struct inode *dir,
 		data->arg.name = name;
 		data->arg.attrs = sattr;
 		data->arg.ftype = ftype;
-		/*
-		 * CREATE only makes non-regular objects, so gate out the
-		 * regular-file-only uncacheable_file_data attribute (NULL inode).
-		 */
-		nfs4_bitmap_copy_adjust(data->bitmask,
-					nfs4_bitmask(server, data->fattr.label),
-					NULL, 0);
-		data->arg.bitmask = data->bitmask;
+		data->arg.bitmask = nfs4_bitmask(server, data->fattr.label);
 		data->arg.umask = current_umask();
 		data->res.server = server;
 		data->res.fh = &data->fh;
@@ -5857,13 +5807,6 @@ void nfs4_bitmask_set(__u32 bitmask[], const __u32 src[],
 		bitmask[1] |= FATTR4_WORD1_SPACE_USED;
 	if (cache_validity & NFS_INO_INVALID_BTIME)
 		bitmask[1] |= FATTR4_WORD1_TIME_CREATE;
-	/*
-	 * uncacheable_file_data (attr 87) applies only to regular files; a
-	 * directory can reach here via DELEGRETURN of a directory delegation.
-	 */
-	if ((cache_validity & NFS_INO_INVALID_UNCACHEABLE_FILE_DATA) &&
-	    S_ISREG(inode->i_mode))
-		bitmask[2] |= FATTR4_WORD2_UNCACHEABLE_FILE_DATA;
 
 	if (cache_validity & NFS_INO_INVALID_SIZE)
 		bitmask[0] |= FATTR4_WORD0_SIZE;
@@ -7817,7 +7760,6 @@ static int nfs4_add_lease(struct file *file, int arg, struct file_lease **lease,
 {
 	struct inode *inode = file_inode(file);
 	fmode_t type = arg == F_RDLCK ? FMODE_READ : FMODE_WRITE;
-	fl_owner_t owner = (*lease)->c.flc_owner;
 	int ret;
 
 	/* No delegation, no lease */
@@ -7827,8 +7769,7 @@ static int nfs4_add_lease(struct file *file, int arg, struct file_lease **lease,
 	if (ret || nfs4_have_delegation(inode, type, 0))
 		return ret;
 	/* We raced with a delegation return */
-	dprintk("%s: raced with a delegation return\n", __func__);
-	nfs4_delete_lease(file, &owner);
+	nfs4_delete_lease(file, priv);
 	return -EAGAIN;
 }
 
@@ -10047,38 +9988,6 @@ nfs4_layoutcommit_done(struct rpc_task *task, void *calldata)
 	case -NFS4ERR_GRACE:	    /* loca_recalim always false */
 		task->tk_status = 0;
 		break;
-	case -NFS4ERR_OLD_STATEID: {
-		u32 old_seqid = be32_to_cpu(data->args.stateid.seqid);
-		struct pnfs_layout_range range = {
-			.iomode = IOMODE_ANY,
-			.offset = 0,
-			.length = NFS4_MAX_UINT64,
-		};
-
-		if (nfs4_layout_refresh_old_stateid(&data->args.stateid,
-						    &range,
-						    data->args.inode)) {
-			struct pnfs_layout_hdr *lo;
-
-			spin_lock(&data->args.inode->i_lock);
-			lo = NFS_I(data->args.inode)->layout;
-			if (lo && pnfs_layout_is_valid(lo) &&
-			    nfs4_stateid_match_other(&data->args.stateid,
-						     &lo->plh_stateid))
-				pnfs_set_layout_stateid(lo, &data->args.stateid,
-							NULL, false);
-			spin_unlock(&data->args.inode->i_lock);
-
-			dprintk("%s: refreshed OLD_STATEID inode %llu seq %u->%u\n",
-				__func__, data->args.inode->i_ino,
-				old_seqid,
-				be32_to_cpu(data->args.stateid.seqid));
-
-			rpc_restart_call_prepare(task);
-			return;
-		}
-		fallthrough;
-	}
 	case 0:
 		break;
 	default:
@@ -10421,7 +10330,6 @@ static void nfs41_free_stateid_release(void *calldata)
 	struct nfs_free_stateid_data *data = calldata;
 	struct nfs_client *clp = data->server->nfs_client;
 
-	nfs_sb_deactive(data->server->super);
 	nfs_put_client(clp);
 	kfree(calldata);
 }
@@ -10460,22 +10368,17 @@ static int nfs41_free_stateid(struct nfs_server *server,
 	struct nfs_free_stateid_data *data;
 	struct rpc_task *task;
 	struct nfs_client *clp = server->nfs_client;
-	int ret = -EIO;
 
 	if (!refcount_inc_not_zero(&clp->cl_count))
-		return ret;
-	if (!nfs_sb_active(server->super))
-		goto out_put_clp;
+		return -EIO;
 
 	nfs4_state_protect(clp, NFS_SP4_MACH_CRED_STATEID,
 		&task_setup.rpc_client, &msg);
 
 	dprintk("NFS call  free_stateid %p\n", stateid);
 	data = kmalloc_obj(*data);
-	if (!data) {
-		ret = -ENOMEM;
-		goto out_put_server;
-	}
+	if (!data)
+		return -ENOMEM;
 	data->server = server;
 	nfs4_stateid_copy(&data->args.stateid, stateid);
 
@@ -10491,11 +10394,6 @@ static int nfs41_free_stateid(struct nfs_server *server,
 	rpc_put_task(task);
 	stateid->type = NFS4_FREED_STATEID_TYPE;
 	return 0;
-out_put_server:
-	nfs_sb_deactive(server->super);
-out_put_clp:
-	nfs_put_client(clp);
-	return ret;
 }
 
 static void
@@ -10653,8 +10551,7 @@ const struct nfs4_minor_version_ops *nfs_v4_minor_ops[] = {
 static ssize_t nfs4_listxattr(struct dentry *dentry, char *list, size_t size)
 {
 	ssize_t error, error2, error3;
-	ssize_t left = size;
-	ssize_t left2;
+	size_t left = size;
 
 	error = generic_listxattr(dentry, list, left);
 	if (error < 0)
@@ -10664,13 +10561,13 @@ static ssize_t nfs4_listxattr(struct dentry *dentry, char *list, size_t size)
 		left -= error;
 	}
 
-	left2 = left;
-	error2 = security_inode_listsecurity(d_inode(dentry), &list, &left2);
+	error2 = security_inode_listsecurity(d_inode(dentry), list, left);
 	if (error2 < 0)
 		return error2;
-	error2 = left - left2;
-	if (list)
+	if (list) {
+		list += error2;
 		left -= error2;
+	}
 
 	error3 = nfs4_listxattr_nfs4_user(d_inode(dentry), list, left);
 	if (error3 < 0)
@@ -10719,7 +10616,6 @@ static const struct inode_operations nfs4_dir_inode_operations = {
 	.getattr	= nfs_getattr,
 	.setattr	= nfs_setattr,
 	.listxattr	= nfs4_listxattr,
-	.fileattr_get	= nfs_fileattr_get,
 };
 
 static const struct inode_operations nfs4_file_inode_operations = {
@@ -10727,7 +10623,6 @@ static const struct inode_operations nfs4_file_inode_operations = {
 	.getattr	= nfs_getattr,
 	.setattr	= nfs_setattr,
 	.listxattr	= nfs4_listxattr,
-	.fileattr_get	= nfs_fileattr_get,
 };
 
 static struct nfs_server *nfs4_clone_server(struct nfs_server *source,

@@ -578,8 +578,8 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 	if (!ret) {
 		if (mmap_write_lock_killable(mm))
 			return -EINTR;
-		ret = do_mmap(file, addr, len, prot, flag, EMPTY_VMA_FLAGS, pgoff,
-			      &populate, &uf);
+		ret = do_mmap(file, addr, len, prot, flag, 0, pgoff, &populate,
+			      &uf);
 		mmap_write_unlock(mm);
 		userfaultfd_unmap_complete(mm, &uf);
 		if (populate)
@@ -627,20 +627,20 @@ EXPORT_SYMBOL(vm_mmap);
 unsigned long vm_mmap_shadow_stack(unsigned long addr, unsigned long len,
 		unsigned long flags)
 {
-	vma_flags_t vma_flags = VMA_SHADOW_STACK;
 	struct mm_struct *mm = current->mm;
 	unsigned long ret, unused;
+	vm_flags_t vm_flags = VM_SHADOW_STACK;
 
 	flags |= MAP_ANONYMOUS | MAP_PRIVATE;
 	if (addr)
 		flags |= MAP_FIXED_NOREPLACE;
 
 	if (IS_ENABLED(CONFIG_TRANSPARENT_HUGEPAGE))
-		vma_flags_set(&vma_flags, VMA_NOHUGEPAGE_BIT);
+		vm_flags |= VM_NOHUGEPAGE;
 
 	mmap_write_lock(mm);
 	ret = do_mmap(NULL, addr, len, PROT_READ | PROT_WRITE, flags,
-		      vma_flags, 0, &unused, NULL);
+		      vm_flags, 0, &unused, NULL);
 	mmap_write_unlock(mm);
 
 	return ret;
@@ -1188,11 +1188,10 @@ void compat_set_desc_from_vma(struct vm_area_desc *desc,
 	desc->start = vma->vm_start;
 	desc->end = vma->vm_end;
 
-	desc->pgoff = vma_start_pgoff(vma);
+	desc->pgoff = vma->vm_pgoff;
 	desc->vm_file = vma->vm_file;
 	desc->vma_flags = vma->flags;
 	desc->page_prot = vma->vm_page_prot;
-	desc->vm_ops = vma->vm_ops;
 
 	/* Default. */
 	desc->action.type = MMAP_NOTHING;
@@ -1353,7 +1352,7 @@ again:
 	if (ps->idx < MAX_FOLIO_NR_PAGES) {
 		memcpy(&ps->folio_snapshot, foliop, 2 * sizeof(struct page));
 		nr_pages = folio_nr_pages(&ps->folio_snapshot);
-		if (nr_pages > 2)
+		if (nr_pages > 1)
 			memcpy(&ps->folio_snapshot.__page_2, &foliop->__page_2,
 			       sizeof(struct page));
 		set_ps_flags(ps, foliop, page);
@@ -1379,7 +1378,7 @@ static int call_vma_mapped(struct vm_area_struct *vma)
 	if (!vm_ops || !vm_ops->mapped)
 		return 0;
 
-	err = vm_ops->mapped(vma->vm_start, vma->vm_end, vma_start_pgoff(vma),
+	err = vm_ops->mapped(vma->vm_start, vma->vm_end, vma->vm_pgoff,
 			     vma->vm_file, &vm_private_data);
 	if (err)
 		return err;
@@ -1397,6 +1396,8 @@ static int mmap_action_finish(struct vm_area_struct *vma,
 
 	if (!err)
 		err = call_vma_mapped(vma);
+	if (!err && action->success_hook)
+		err = action->success_hook(vma);
 
 	/* do_munmap() might take rmap lock, so release if held. */
 	maybe_rmap_unlock_action(vma, action);
@@ -1414,22 +1415,16 @@ static int mmap_action_finish(struct vm_area_struct *vma,
 	 */
 	len = vma_pages(vma) << PAGE_SHIFT;
 	do_munmap(current->mm, vma->vm_start, len, NULL);
-
-	return action->error_override ?: err;
+	if (action->error_hook) {
+		/* We may want to filter the error. */
+		err = action->error_hook(err);
+		/* The caller should not clear the error. */
+		VM_WARN_ON_ONCE(!err);
+	}
+	return err;
 }
 
 #ifdef CONFIG_MMU
-
-static int check_mmap_action(struct mmap_action *action)
-{
-	const unsigned long override = action->error_override;
-
-	if (WARN_ON_ONCE(override && !IS_ERR_VALUE(override)))
-		return -EINVAL;
-
-	return 0;
-}
-
 /**
  * mmap_action_prepare - Perform preparatory setup for an VMA descriptor
  * action which need to be performed.
@@ -1439,14 +1434,7 @@ static int check_mmap_action(struct mmap_action *action)
  */
 int mmap_action_prepare(struct vm_area_desc *desc)
 {
-	struct mmap_action *action = &desc->action;
-	int err;
-
-	err = check_mmap_action(action);
-	if (err)
-		return err;
-
-	switch (action->type) {
+	switch (desc->action.type) {
 	case MMAP_NOTHING:
 		return 0;
 	case MMAP_REMAP_PFN:

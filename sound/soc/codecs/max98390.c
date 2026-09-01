@@ -788,6 +788,7 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 	const char *vendor, *product;
 	struct max98390_priv *max98390 =
 		snd_soc_component_get_drvdata(component);
+	const struct firmware *fw;
 	char *dsm_param;
 
 	vendor = dmi_get_system_info(DMI_SYS_VENDOR);
@@ -804,8 +805,6 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 		snprintf(filename, sizeof(filename), "%s",
 			max98390->dsm_param_name);
 	}
-
-	const struct firmware *fw __free(firmware) = NULL;
 	ret = request_firmware(&fw, filename, component->dev);
 	if (ret) {
 		ret = request_firmware(&fw, "dsm_param.bin", component->dev);
@@ -813,7 +812,7 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 			ret = request_firmware(&fw, "dsmparam.bin",
 				component->dev);
 			if (ret)
-				return ret;
+				goto err;
 		}
 	}
 
@@ -823,7 +822,8 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 	if (fw->size < MAX98390_DSM_PARAM_MIN_SIZE) {
 		dev_err(component->dev,
 			"param fw is invalid.\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_alloc;
 	}
 	dsm_param = (char *)fw->data;
 	param_start_addr = (dsm_param[0] & 0xff) | (dsm_param[1] & 0xff) << 8;
@@ -833,7 +833,8 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 		fw->size < param_size + MAX98390_DSM_PAYLOAD_OFFSET) {
 		dev_err(component->dev,
 			"param fw is invalid.\n");
-		return -EINVAL;
+		ret = -EINVAL;
+		goto err_alloc;
 	}
 	regmap_write(max98390->regmap, MAX98390_R203A_AMP_EN, 0x80);
 	dsm_param += MAX98390_DSM_PAYLOAD_OFFSET;
@@ -841,7 +842,10 @@ static int max98390_dsm_init(struct snd_soc_component *component)
 		dsm_param, param_size);
 	regmap_write(max98390->regmap, MAX98390_R23E1_DSP_GLOBAL_EN, 0x01);
 
-	return 0;
+err_alloc:
+	release_firmware(fw);
+err:
+	return ret;
 }
 
 static void max98390_init_regs(struct snd_soc_component *component)
@@ -948,17 +952,11 @@ static int max98390_suspend(struct device *dev)
 static int max98390_resume(struct device *dev)
 {
 	struct max98390_priv *max98390 = dev_get_drvdata(dev);
-	int ret;
 
 	dev_dbg(dev, "%s:Enter\n", __func__);
 
 	regcache_cache_only(max98390->regmap, false);
-	ret = regcache_sync(max98390->regmap);
-	if (ret) {
-		regcache_cache_only(max98390->regmap, true);
-		regcache_mark_dirty(max98390->regmap);
-		return ret;
-	}
+	regcache_sync(max98390->regmap);
 
 	return 0;
 }
@@ -980,7 +978,7 @@ static const struct snd_soc_component_driver soc_codec_dev_max98390 = {
 	.endianness		= 1,
 };
 
-static const struct regmap_config max98390_regmap = {
+const struct regmap_config max98390_regmap = {
 	.reg_bits         = 16,
 	.val_bits         = 8,
 	.max_register     = MAX98390_R24FF_REV_ID,
@@ -990,6 +988,7 @@ static const struct regmap_config max98390_regmap = {
 	.volatile_reg	  = max98390_volatile_reg,
 	.cache_type       = REGCACHE_RBTREE,
 };
+EXPORT_SYMBOL_GPL(max98390_regmap);
 
 static void max98390_slot_config(struct i2c_client *i2c,
 	struct max98390_priv *max98390)
@@ -1098,8 +1097,8 @@ static int max98390_i2c_probe(struct i2c_client *i2c)
 }
 
 static const struct i2c_device_id max98390_i2c_id[] = {
-	{ .name = "max98390" },
-	{ }
+	{ "max98390"},
+	{},
 };
 
 MODULE_DEVICE_TABLE(i2c, max98390_i2c_id);
@@ -1114,6 +1113,7 @@ MODULE_DEVICE_TABLE(of, max98390_of_match);
 
 #ifdef CONFIG_ACPI
 static const struct acpi_device_id max98390_acpi_match[] = {
+	{ "MAX98390", 0 },
 	{ "MX98390", 0 },
 	{},
 };

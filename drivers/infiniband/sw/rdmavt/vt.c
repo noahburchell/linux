@@ -6,7 +6,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/dma-mapping.h>
-#include <rdma/uverbs_ioctl.h>
 #include "vt.h"
 #include "cq.h"
 #include "trace.h"
@@ -55,10 +54,8 @@ struct rvt_dev_info *rvt_alloc_device(size_t size, int nports)
 		return rdi;
 
 	rdi->ports = kzalloc_objs(*rdi->ports, nports);
-	if (!rdi->ports) {
+	if (!rdi->ports)
 		ib_dealloc_device(&rdi->ibdev);
-		return NULL;
-	}
 
 	return rdi;
 }
@@ -82,11 +79,9 @@ static int rvt_query_device(struct ib_device *ibdev,
 			    struct ib_udata *uhw)
 {
 	struct rvt_dev_info *rdi = ib_to_rvt(ibdev);
-	int err;
 
-	err = ib_no_udata_io(uhw);
-	if (err)
-		return err;
+	if (uhw->inlen || uhw->outlen)
+		return -EINVAL;
 	/*
 	 * Return rvt_dev_info.dparms.props contents
 	 */

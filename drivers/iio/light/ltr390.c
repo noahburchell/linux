@@ -838,7 +838,8 @@ static int ltr390_probe(struct i2c_client *client)
 						"ltr390_thresh_event",
 						indio_dev);
 		if (ret)
-			return ret;
+			return dev_err_probe(dev, ret,
+					     "request irq (%d) failed\n", client->irq);
 	}
 
 	ret = ltr390_pm_init(data);
@@ -888,7 +889,7 @@ static const struct dev_pm_ops ltr390_pm_ops = {
 };
 
 static const struct i2c_device_id ltr390_id[] = {
-	{ .name = "ltr390" },
+	{ "ltr390" },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ltr390_id);

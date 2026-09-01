@@ -55,6 +55,24 @@
 #include <asm/ptrace.h>
 #include <asm/irq_regs.h>
 
+#include <linux/random.h>
+
+/* Bullshit */
+static const char *const panic_msgs[] = {
+	"skill issue",
+	"He's dead, Jim.",
+	"WHAT!?",
+	"This incident will be reported.",
+	"sowwy >_<",
+	"This incident will not be reported.",
+	"*(volatile int *__unions_null = NULL) = 0;",
+	"IRQL_NOT_LESS_OR_EQUAL",
+	"Have you tried turning it off and on again?",
+	"I'm sorry, Dave. I'm afraid I can't do that.",
+	"Keyboard not found. Press F1 to continue."
+	/* ... */
+};
+
 /* Whether we react on sysrq keys or just ignore them */
 static int __read_mostly sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
 static bool __read_mostly sysrq_always_enabled;
@@ -151,7 +169,7 @@ static void sysrq_handle_crash(u8 key)
 	/* release the RCU read lock before crashing */
 	rcu_read_unlock();
 
-	panic("sysrq triggered crash\n");
+	panic("%s\n", panic_msgs[get_random_u32_below(ARRAY_SIZE(panic_msgs))]);
 }
 static const struct sysrq_key_op sysrq_crash_op = {
 	.handler	= sysrq_handle_crash,

@@ -19,6 +19,7 @@ Contents:
    amd/pds_vfio_pci
    aquantia/atlantic
    chelsio/cxgb
+   cirrus/cs89x0
    dlink/dl2k
    davicom/dm9000
    dec/dmfe
@@ -35,7 +36,6 @@ Contents:
    intel/idpf
    intel/igb
    intel/igbvf
-   intel/ixd
    intel/ixgbe
    intel/ixgbevf
    intel/i40e

@@ -58,13 +58,16 @@ static int msm_hdmi_bridge_clear_avi_infoframe(struct drm_bridge *bridge)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
+	u32 val;
 
-	hdmi_clear_bits(hdmi, REG_HDMI_INFOFRAME_CTRL0,
-			HDMI_INFOFRAME_CTRL0_AVI_SEND |
-			HDMI_INFOFRAME_CTRL0_AVI_CONT);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL0);
+	val &= ~(HDMI_INFOFRAME_CTRL0_AVI_SEND |
+		 HDMI_INFOFRAME_CTRL0_AVI_CONT);
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL0, val);
 
-	hdmi_clear_bits(hdmi, REG_HDMI_INFOFRAME_CTRL1,
-			HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE__MASK);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL1);
+	val &= ~HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE__MASK;
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL1, val);
 
 	return 0;
 }
@@ -73,15 +76,18 @@ static int msm_hdmi_bridge_clear_audio_infoframe(struct drm_bridge *bridge)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
+	u32 val;
 
-	hdmi_clear_bits(hdmi, REG_HDMI_INFOFRAME_CTRL0,
-			HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SEND |
-			HDMI_INFOFRAME_CTRL0_AUDIO_INFO_CONT |
-			HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SOURCE |
-			HDMI_INFOFRAME_CTRL0_AUDIO_INFO_UPDATE);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL0);
+	val &= ~(HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SEND |
+		 HDMI_INFOFRAME_CTRL0_AUDIO_INFO_CONT |
+		 HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SOURCE |
+		 HDMI_INFOFRAME_CTRL0_AUDIO_INFO_UPDATE);
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL0, val);
 
-	hdmi_clear_bits(hdmi, REG_HDMI_INFOFRAME_CTRL1,
-			HDMI_INFOFRAME_CTRL1_AUDIO_INFO_LINE__MASK);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL1);
+	val &= ~HDMI_INFOFRAME_CTRL1_AUDIO_INFO_LINE__MASK;
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL1, val);
 
 	return 0;
 }
@@ -90,11 +96,13 @@ static int msm_hdmi_bridge_clear_spd_infoframe(struct drm_bridge *bridge)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
+	u32 val;
 
-	hdmi_clear_bits(hdmi, REG_HDMI_GEN_PKT_CTRL,
-			HDMI_GEN_PKT_CTRL_GENERIC1_SEND |
-			HDMI_GEN_PKT_CTRL_GENERIC1_CONT |
-			HDMI_GEN_PKT_CTRL_GENERIC1_LINE__MASK);
+	val = hdmi_read(hdmi, REG_HDMI_GEN_PKT_CTRL);
+	val &= ~(HDMI_GEN_PKT_CTRL_GENERIC1_SEND |
+		 HDMI_GEN_PKT_CTRL_GENERIC1_CONT |
+		 HDMI_GEN_PKT_CTRL_GENERIC1_LINE__MASK);
+	hdmi_write(hdmi, REG_HDMI_GEN_PKT_CTRL, val);
 
 	return 0;
 }
@@ -103,12 +111,14 @@ static int msm_hdmi_bridge_clear_hdmi_infoframe(struct drm_bridge *bridge)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
+	u32 val;
 
-	hdmi_clear_bits(hdmi, REG_HDMI_GEN_PKT_CTRL,
-			HDMI_GEN_PKT_CTRL_GENERIC0_SEND |
-			HDMI_GEN_PKT_CTRL_GENERIC0_CONT |
-			HDMI_GEN_PKT_CTRL_GENERIC0_UPDATE |
-			HDMI_GEN_PKT_CTRL_GENERIC0_LINE__MASK);
+	val = hdmi_read(hdmi, REG_HDMI_GEN_PKT_CTRL);
+	val &= ~(HDMI_GEN_PKT_CTRL_GENERIC0_SEND |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_CONT |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_UPDATE |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_LINE__MASK);
+	hdmi_write(hdmi, REG_HDMI_GEN_PKT_CTRL, val);
 
 	return 0;
 }
@@ -119,6 +129,7 @@ static int msm_hdmi_bridge_write_avi_infoframe(struct drm_bridge *bridge,
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
 	u32 buf[4] = {};
+	u32 val;
 	int i;
 
 	if (len != HDMI_INFOFRAME_SIZE(AVI) || len - 3 > sizeof(buf)) {
@@ -142,13 +153,15 @@ static int msm_hdmi_bridge_write_avi_infoframe(struct drm_bridge *bridge,
 	for (i = 0; i < ARRAY_SIZE(buf); i++)
 		hdmi_write(hdmi, REG_HDMI_AVI_INFO(i), buf[i]);
 
-	hdmi_update_bits(hdmi, REG_HDMI_INFOFRAME_CTRL0,
-			 HDMI_INFOFRAME_CTRL0_AVI_SEND | HDMI_INFOFRAME_CTRL0_AVI_CONT,
-			 HDMI_INFOFRAME_CTRL0_AVI_SEND | HDMI_INFOFRAME_CTRL0_AVI_CONT);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL0);
+	val |= HDMI_INFOFRAME_CTRL0_AVI_SEND |
+		HDMI_INFOFRAME_CTRL0_AVI_CONT;
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL0, val);
 
-	hdmi_update_bits(hdmi, REG_HDMI_INFOFRAME_CTRL1,
-			 HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE__MASK,
-			 HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE(AVI_IFRAME_LINE_NUMBER));
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL1);
+	val &= ~HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE__MASK;
+	val |= HDMI_INFOFRAME_CTRL1_AVI_INFO_LINE(AVI_IFRAME_LINE_NUMBER);
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL1, val);
 
 	return 0;
 }
@@ -180,11 +193,12 @@ static int msm_hdmi_bridge_write_audio_infoframe(struct drm_bridge *bridge,
 		   buffer[9] << 16 |
 		   buffer[10] << 24);
 
-	val = HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SEND |
-	      HDMI_INFOFRAME_CTRL0_AUDIO_INFO_CONT |
-	      HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SOURCE |
-	      HDMI_INFOFRAME_CTRL0_AUDIO_INFO_UPDATE;
-	hdmi_update_bits(hdmi, REG_HDMI_INFOFRAME_CTRL0, val, val);
+	val = hdmi_read(hdmi, REG_HDMI_INFOFRAME_CTRL0);
+	val |= HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SEND |
+		HDMI_INFOFRAME_CTRL0_AUDIO_INFO_CONT |
+		HDMI_INFOFRAME_CTRL0_AUDIO_INFO_SOURCE |
+		HDMI_INFOFRAME_CTRL0_AUDIO_INFO_UPDATE;
+	hdmi_write(hdmi, REG_HDMI_INFOFRAME_CTRL0, val);
 
 	return 0;
 }
@@ -217,10 +231,11 @@ static int msm_hdmi_bridge_write_spd_infoframe(struct drm_bridge *bridge,
 	for (i = 0; i < ARRAY_SIZE(buf); i++)
 		hdmi_write(hdmi, REG_HDMI_GENERIC1(i), buf[i]);
 
-	val = HDMI_GEN_PKT_CTRL_GENERIC1_SEND |
-	      HDMI_GEN_PKT_CTRL_GENERIC1_CONT |
-	      HDMI_GEN_PKT_CTRL_GENERIC1_LINE(SPD_IFRAME_LINE_NUMBER);
-	hdmi_update_bits(hdmi, REG_HDMI_GEN_PKT_CTRL, val, val);
+	val = hdmi_read(hdmi, REG_HDMI_GEN_PKT_CTRL);
+	val |= HDMI_GEN_PKT_CTRL_GENERIC1_SEND |
+		 HDMI_GEN_PKT_CTRL_GENERIC1_CONT |
+		 HDMI_GEN_PKT_CTRL_GENERIC1_LINE(SPD_IFRAME_LINE_NUMBER);
+	hdmi_write(hdmi, REG_HDMI_GEN_PKT_CTRL, val);
 
 	return 0;
 }
@@ -254,11 +269,12 @@ static int msm_hdmi_bridge_write_hdmi_infoframe(struct drm_bridge *bridge,
 	for (i = 0; i < ARRAY_SIZE(buf); i++)
 		hdmi_write(hdmi, REG_HDMI_GENERIC0(i), buf[i]);
 
-	val = HDMI_GEN_PKT_CTRL_GENERIC0_SEND |
-	      HDMI_GEN_PKT_CTRL_GENERIC0_CONT |
-	      HDMI_GEN_PKT_CTRL_GENERIC0_UPDATE |
-	      HDMI_GEN_PKT_CTRL_GENERIC0_LINE(VENSPEC_IFRAME_LINE_NUMBER);
-	hdmi_update_bits(hdmi, REG_HDMI_GEN_PKT_CTRL, val, val);
+	val = hdmi_read(hdmi, REG_HDMI_GEN_PKT_CTRL);
+	val |= HDMI_GEN_PKT_CTRL_GENERIC0_SEND |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_CONT |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_UPDATE |
+		 HDMI_GEN_PKT_CTRL_GENERIC0_LINE(VENSPEC_IFRAME_LINE_NUMBER);
+	hdmi_write(hdmi, REG_HDMI_GEN_PKT_CTRL, val);
 
 	return 0;
 }
@@ -267,7 +283,7 @@ static void msm_hdmi_set_timings(struct hdmi *hdmi,
 				 const struct drm_display_mode *mode);
 
 static void msm_hdmi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
-					      struct drm_atomic_commit *state)
+					      struct drm_atomic_state *state)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
@@ -309,7 +325,7 @@ static void msm_hdmi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 }
 
 static void msm_hdmi_bridge_atomic_post_disable(struct drm_bridge *bridge,
-						struct drm_atomic_commit *state)
+						struct drm_atomic_state *state)
 {
 	struct hdmi_bridge *hdmi_bridge = to_hdmi_bridge(bridge);
 	struct hdmi *hdmi = hdmi_bridge->hdmi;
@@ -439,7 +455,7 @@ static enum drm_mode_status msm_hdmi_bridge_tmds_char_rate_valid(const struct dr
 static const struct drm_bridge_funcs msm_hdmi_bridge_funcs = {
 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
-	.atomic_create_state = drm_atomic_helper_bridge_create_state,
+	.atomic_reset = drm_atomic_helper_bridge_reset,
 	.atomic_pre_enable = msm_hdmi_bridge_atomic_pre_enable,
 	.atomic_post_disable = msm_hdmi_bridge_atomic_post_disable,
 	.edid_read = msm_hdmi_bridge_edid_read,

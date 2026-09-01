@@ -1013,7 +1013,6 @@ netdev_nl_get_dma_dev(struct net_device *netdev, unsigned long *rxq_bitmap,
 int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct net_devmem_dmabuf_binding *binding;
-	unsigned int niov_shift = PAGE_SHIFT;
 	u32 ifindex, dmabuf_fd, rxq_idx;
 	struct netdev_nl_sock *priv;
 	struct net_device *netdev;
@@ -1030,18 +1029,6 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 
 	ifindex = nla_get_u32(info->attrs[NETDEV_A_DEV_IFINDEX]);
 	dmabuf_fd = nla_get_u32(info->attrs[NETDEV_A_DMABUF_FD]);
-
-	if (info->attrs[NETDEV_A_DMABUF_RX_PAGE_SIZE]) {
-		u32 rx_page_size = nla_get_u32(info->attrs[NETDEV_A_DMABUF_RX_PAGE_SIZE]);
-
-		if (!is_power_of_2(rx_page_size)) {
-			NL_SET_ERR_MSG_ATTR(info->extack,
-					    info->attrs[NETDEV_A_DMABUF_RX_PAGE_SIZE],
-					    "rx-page-size must be a power of 2");
-			return -EINVAL;
-		}
-		niov_shift = ilog2(rx_page_size);
-	}
 
 	priv = genl_sk_priv_get(&netdev_nl_family, NETLINK_CB(skb).sk);
 	if (IS_ERR(priv))
@@ -1092,9 +1079,8 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 		goto err_rxq_bitmap;
 	}
 
-	binding = net_devmem_bind_dmabuf(netdev, NULL, dma_dev, DMA_FROM_DEVICE,
-					 dmabuf_fd, niov_shift, priv,
-					 info->extack);
+	binding = net_devmem_bind_dmabuf(netdev, dma_dev, DMA_FROM_DEVICE,
+					 dmabuf_fd, priv, info->extack);
 	if (IS_ERR(binding)) {
 		err = PTR_ERR(binding);
 		goto err_rxq_bitmap;
@@ -1107,9 +1093,7 @@ int netdev_nl_bind_rx_doit(struct sk_buff *skb, struct genl_info *info)
 			goto err_unbind;
 	}
 
-	/* rsp was allocated large enough */
-	WARN_ON_ONCE(nla_put_u32(rsp, NETDEV_A_DMABUF_ID, binding->id));
-
+	nla_put_u32(rsp, NETDEV_A_DMABUF_ID, binding->id);
 	genlmsg_end(rsp, hdr);
 
 	err = genlmsg_reply(rsp, info);
@@ -1135,43 +1119,9 @@ err_genlmsg_free:
 	return err;
 }
 
-/* Find the DMA-capable device for a netmem TX binding.
- *
- * For NETMEM_TX_DMA devices, return the device itself.
- * For NETMEM_TX_NO_DMA devices, walk leased RX queues to find the underlying
- * physical device and return it.
- */
-static struct net_device *
-netdev_find_netmem_tx_dev(struct net_device *dev)
-{
-	struct netdev_rx_queue *lease_rxq;
-	struct net_device *phys_dev;
-	int i;
-
-	if (dev->netmem_tx == NETMEM_TX_DMA)
-		return dev;
-
-	if (dev->netmem_tx != NETMEM_TX_NO_DMA)
-		return NULL;
-
-	for (i = 0; i < dev->real_num_rx_queues; i++) {
-		lease_rxq = READ_ONCE(__netif_get_rx_queue(dev, i)->lease);
-		if (!lease_rxq)
-			continue;
-
-		phys_dev = lease_rxq->dev;
-		if (netif_device_present(phys_dev) &&
-		    phys_dev->netmem_tx == NETMEM_TX_DMA)
-			return phys_dev;
-	}
-
-	return NULL;
-}
-
 int netdev_nl_bind_tx_doit(struct sk_buff *skb, struct genl_info *info)
 {
 	struct net_devmem_dmabuf_binding *binding;
-	struct net_device *bind_dev;
 	struct netdev_nl_sock *priv;
 	struct net_device *netdev;
 	struct device *dma_dev;
@@ -1214,50 +1164,29 @@ int netdev_nl_bind_tx_doit(struct sk_buff *skb, struct genl_info *info)
 		goto err_unlock_netdev;
 	}
 
-	if (netdev->netmem_tx == NETMEM_TX_NONE) {
+	if (!netdev->netmem_tx) {
 		err = -EOPNOTSUPP;
 		NL_SET_ERR_MSG(info->extack,
 			       "Driver does not support netmem TX");
 		goto err_unlock_netdev;
 	}
 
-	bind_dev = netdev_find_netmem_tx_dev(netdev);
-	if (!bind_dev) {
-		err = -EOPNOTSUPP;
-		NL_SET_ERR_MSG(info->extack,
-			       "No DMA-capable device found for netmem TX");
+	dma_dev = netdev_queue_get_dma_dev(netdev, 0, NETDEV_QUEUE_TYPE_TX);
+	binding = net_devmem_bind_dmabuf(netdev, dma_dev, DMA_TO_DEVICE,
+					 dmabuf_fd, priv, info->extack);
+	if (IS_ERR(binding)) {
+		err = PTR_ERR(binding);
 		goto err_unlock_netdev;
 	}
 
-	if (bind_dev != netdev)
-		netdev_lock(bind_dev);
-
-	dma_dev = netdev_queue_get_dma_dev(bind_dev, 0, NETDEV_QUEUE_TYPE_TX);
-
-	binding = net_devmem_bind_dmabuf(bind_dev,
-					 bind_dev != netdev ? netdev : NULL,
-					 dma_dev, DMA_TO_DEVICE, dmabuf_fd,
-					 PAGE_SHIFT, priv, info->extack);
-	if (IS_ERR(binding)) {
-		err = PTR_ERR(binding);
-		goto err_unlock_bind_dev;
-	}
-
-	/* rsp was allocated large enough */
-	WARN_ON_ONCE(nla_put_u32(rsp, NETDEV_A_DMABUF_ID, binding->id));
-
+	nla_put_u32(rsp, NETDEV_A_DMABUF_ID, binding->id);
 	genlmsg_end(rsp, hdr);
 
-	if (bind_dev != netdev)
-		netdev_unlock(bind_dev);
 	netdev_unlock(netdev);
 	mutex_unlock(&priv->lock);
 
 	return genlmsg_reply(rsp, info);
 
-err_unlock_bind_dev:
-	if (bind_dev != netdev)
-		netdev_unlock(bind_dev);
 err_unlock_netdev:
 	netdev_unlock(netdev);
 err_unlock_sock:
@@ -1412,9 +1341,7 @@ int netdev_nl_queue_create_doit(struct sk_buff *skb, struct genl_info *info)
 
 	netdev_rx_queue_lease(rxq, rxq_lease);
 
-	/* rsp was allocated large enough */
-	WARN_ON_ONCE(nla_put_u32(rsp, NETDEV_A_QUEUE_ID, queue_id));
-
+	nla_put_u32(rsp, NETDEV_A_QUEUE_ID, queue_id);
 	genlmsg_end(rsp, hdr);
 
 	netdev_unlock(dev_lease);

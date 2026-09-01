@@ -136,8 +136,8 @@ static int parse_one(char *param,
 			if (!val &&
 			    !(params[i].ops->flags & KERNEL_PARAM_OPS_FL_NOARG))
 				return -EINVAL;
-			pr_debug("handling %s with value '%s'\n", param,
-				val ? val : "no-arg");
+			pr_debug("handling %s with %p\n", param,
+				params[i].ops->set);
 			kernel_param_lock(params[i].mod);
 			if (param_check_unsafe(&params[i]))
 				err = params[i].ops->set(val, &params[i]);
@@ -261,7 +261,6 @@ EXPORT_SYMBOL_GPL(param_set_uint_minmax);
 
 int param_set_charp(const char *val, const struct kernel_param *kp)
 {
-	char *tmp;
 	size_t len, maxlen = 1024;
 
 	len = strnlen(val, maxlen + 1);
@@ -270,20 +269,19 @@ int param_set_charp(const char *val, const struct kernel_param *kp)
 		return -ENOSPC;
 	}
 
+	maybe_kfree_parameter(*(char **)kp->arg);
+
 	/*
 	 * This is a hack. We can't kmalloc() in early boot, and we
 	 * don't need to; this mangled commandline is preserved.
 	 */
 	if (slab_is_available()) {
-		tmp = kmalloc_parameter(len + 1);
-		if (!tmp)
+		*(char **)kp->arg = kmalloc_parameter(len + 1);
+		if (!*(char **)kp->arg)
 			return -ENOMEM;
-		memcpy(tmp, val, len + 1);
+		strcpy(*(char **)kp->arg, val);
 	} else
-		tmp = (char *)val;
-
-	maybe_kfree_parameter(*(char **)kp->arg);
-	*(char **)kp->arg = tmp;
+		*(const char **)kp->arg = val;
 
 	return 0;
 }
@@ -540,7 +538,7 @@ const struct kernel_param_ops param_ops_string = {
 };
 EXPORT_SYMBOL(param_ops_string);
 
-/* sysfs output in /sys/module/XYZ/parameters/ */
+/* sysfs output in /sys/modules/XYZ/parameters/ */
 #define to_module_attr(n) container_of_const(n, struct module_attribute, attr)
 #define to_module_kobject(n) container_of(n, struct module_kobject, kobj)
 
@@ -944,9 +942,9 @@ const struct kobj_type module_ktype = {
 /*
  * param_sysfs_init - create "module" kset
  *
- * This must be done before any driver registration so that when a driver comes
- * from a built-in module, the driver core can add the module under /sys/module
- * and create the associated driver symlinks.
+ * This must be done before the initramfs is unpacked and
+ * request_module() thus becomes possible, because otherwise the
+ * module load would fail in mod_sysfs_init.
  */
 static int __init param_sysfs_init(void)
 {
@@ -959,7 +957,7 @@ static int __init param_sysfs_init(void)
 
 	return 0;
 }
-pure_initcall(param_sysfs_init);
+subsys_initcall(param_sysfs_init);
 
 /*
  * param_sysfs_builtin_init - add sysfs version and parameter

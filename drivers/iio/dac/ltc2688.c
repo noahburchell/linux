@@ -14,6 +14,7 @@
 #include <linux/limits.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/property.h>
@@ -991,7 +992,7 @@ static const struct of_device_id ltc2688_of_id[] = {
 MODULE_DEVICE_TABLE(of, ltc2688_of_id);
 
 static const struct spi_device_id ltc2688_id[] = {
-	{ .name = "ltc2688" },
+	{ "ltc2688" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, ltc2688_id);

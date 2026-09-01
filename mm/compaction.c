@@ -24,7 +24,6 @@
 #include <linux/page_owner.h>
 #include <linux/psi.h>
 #include <linux/cpuset.h>
-#include "page_alloc.h"
 #include "internal.h"
 
 #ifdef CONFIG_COMPACTION
@@ -83,7 +82,7 @@ static inline bool is_via_compact_memory(int order) { return false; }
 
 static struct page *mark_allocated_noprof(struct page *page, unsigned int order, gfp_t gfp_flags)
 {
-	post_alloc_hook(page, order, __GFP_MOVABLE, ALLOC_DEFAULT);
+	post_alloc_hook(page, order, __GFP_MOVABLE);
 	set_page_refcounted(page);
 	return page;
 }
@@ -645,6 +644,7 @@ static unsigned long isolate_freepages_block(struct compact_control *cc,
 		isolated = __isolate_free_page(page, order);
 		if (!isolated)
 			break;
+		set_page_private(page, order);
 
 		nr_scanned += isolated - 1;
 		total_isolated += isolated;
@@ -1123,7 +1123,7 @@ isolate_migratepages_block(struct compact_control *cc, unsigned long low_pfn,
 		 * To minimise LRU disruption, the caller can indicate with
 		 * ISOLATE_ASYNC_MIGRATE that it only wants to isolate pages
 		 * it will be able to migrate without blocking - clean pages
-		 * for the most part.  Writeback would require blocking.
+		 * for the most part.  PageWriteback would require blocking.
 		 */
 		if ((mode & ISOLATE_ASYNC_MIGRATE) && folio_test_writeback(folio))
 			goto isolate_fail_put;
@@ -1381,44 +1381,12 @@ static bool suitable_migration_source(struct compact_control *cc,
 	if (pageblock_skip_persistent(page))
 		return false;
 
-	/*
-	 * Background compaction produces blocks for the zone at
-	 * large, with no particular allocation context. Allow all
-	 * block types, including CMA.
-	 */
-	if (!cc->direct_compaction)
+	if ((cc->mode != MIGRATE_ASYNC) || !cc->direct_compaction)
 		return true;
 
 	block_mt = get_pageblock_migratetype(page);
 
-	/*
-	 * CMA pages can only be taken by ALLOC_CMA requests. For anybody
-	 * else, vacating a CMA block consumes free pages the caller
-	 * could have used, and produces free pages it cannot.
-	 */
-	if (is_migrate_cma(block_mt) && !(cc->alloc_flags & ALLOC_CMA))
-		return false;
-
-	/*
-	 * Per default, scans are restricted to blocks compatible with
-	 * the request, to prevent cross-contamination. Once
-	 * compaction priority escalates to synchronous scans, though,
-	 * scan all blocks to try to make forward progress. For
-	 * movable request, this likely helps little: there shouldn't
-	 * be many migratable pages inside non-movable blocks besides
-	 * allocator fallbacks. For non-movable requests, this helps a
-	 * lot, as they can finally scan movable blocks.
-	 */
-	if (cc->mode != MIGRATE_ASYNC)
-		return true;
-
-	/*
-	 * Prevent <pageblock_order unmovable/reclaimable requests from
-	 * polluting movable blocks through fallbacks. Whole-block production
-	 * (directly requested, or defrag_mode) is exempt as the allocator
-	 * claims and converts these.
-	 */
-	if (cc->migratetype == MIGRATE_MOVABLE || cc->order >= pageblock_order)
+	if (cc->migratetype == MIGRATE_MOVABLE)
 		return is_migrate_movable(block_mt);
 	else
 		return block_mt == cc->migratetype;
@@ -1649,6 +1617,7 @@ static void fast_isolate_freepages(struct compact_control *cc)
 		/* Isolate the page if available */
 		if (page) {
 			if (__isolate_free_page(page, order)) {
+				set_page_private(page, order);
 				nr_isolated = 1 << order;
 				nr_scanned += nr_isolated - 1;
 				total_isolated += nr_isolated;
@@ -1877,10 +1846,11 @@ again:
 		size >>= 1;
 
 		list_add(&freepage[size].lru, &cc->freepages[start_order]);
+		set_page_private(&freepage[size], start_order);
 	}
 	dst = (struct folio *)freepage;
 
-	post_alloc_hook(&dst->page, order, __GFP_MOVABLE, ALLOC_DEFAULT);
+	post_alloc_hook(&dst->page, order, __GFP_MOVABLE);
 	set_page_refcounted(&dst->page);
 	if (order)
 		prep_compound_page(&dst->page, order);
@@ -1933,7 +1903,11 @@ static int sysctl_compact_unevictable_allowed __read_mostly = CONFIG_COMPACT_UNE
  * aggressively the kernel should compact memory in the
  * background. It takes values in the range [0, 100].
  */
+#ifdef CONFIG_CACHY
+static unsigned int __read_mostly sysctl_compaction_proactiveness;
+#else
 static unsigned int __read_mostly sysctl_compaction_proactiveness = 20;
+#endif
 static int sysctl_extfrag_threshold = 500;
 static int __read_mostly sysctl_compact_memory;
 
@@ -2004,12 +1978,12 @@ static unsigned long fast_find_migrateblock(struct compact_control *cc)
 		return pfn;
 
 	/*
-	 * Prevent <pageblock_order unmovable/reclaimable requests from
-	 * polluting movable blocks through fallbacks. Whole-block production
-	 * is exempt as the allocator claims and converts these.
+	 * Only allow kcompactd and direct requests for movable pages to
+	 * quickly clear out a MOVABLE pageblock for allocation. This
+	 * reduces the risk that a large movable pageblock is freed for
+	 * an unmovable/reclaimable small allocation.
 	 */
-	if (cc->direct_compaction && cc->migratetype != MIGRATE_MOVABLE &&
-	    cc->order < pageblock_order)
+	if (cc->direct_compaction && cc->migratetype != MIGRATE_MOVABLE)
 		return pfn;
 
 	/*
@@ -2369,8 +2343,7 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 		 * Job done if allocation would steal freepages from
 		 * other migratetype buddy lists.
 		 */
-		if (find_suitable_fallback(area, order, migratetype, true, NULL)
-		    == FALLBACK_FOUND)
+		if (find_suitable_fallback(area, order, migratetype, true) >= 0)
 			/*
 			 * Movable pages are OK in any pageblock. If we are
 			 * stealing for a non-movable allocation, make sure
@@ -2477,7 +2450,7 @@ bool compaction_suitable(struct zone *zone, int order, unsigned long watermark,
 
 /* Used by direct reclaimers */
 bool compaction_zonelist_suitable(struct alloc_context *ac, int order,
-		int alloc_flags, gfp_t gfp_mask)
+		int alloc_flags)
 {
 	struct zone *zone;
 	struct zoneref *z;
@@ -2489,10 +2462,6 @@ bool compaction_zonelist_suitable(struct alloc_context *ac, int order,
 	for_each_zone_zonelist_nodemask(zone, z, ac->zonelist,
 				ac->highest_zoneidx, ac->nodemask) {
 		unsigned long available;
-
-		if (cpusets_enabled() && (alloc_flags & ALLOC_CPUSET) &&
-		    !__cpuset_zone_allowed(zone, gfp_mask))
-			continue;
 
 		/*
 		 * Do not consider all the reclaimable memory because we do not
@@ -2800,8 +2769,9 @@ out:
 static enum compact_result compact_zone_order(struct zone *zone, int order,
 		gfp_t gfp_mask, enum compact_priority prio,
 		unsigned int alloc_flags, int highest_zoneidx,
-		struct capture_control *capc)
+		struct page **capture)
 {
+	enum compact_result ret;
 	struct compact_control cc = {
 		.order = order,
 		.search_order = order,
@@ -2816,24 +2786,54 @@ static enum compact_result compact_zone_order(struct zone *zone, int order,
 		.ignore_skip_hint = (prio == MIN_COMPACT_PRIORITY),
 		.ignore_block_suitable = (prio == MIN_COMPACT_PRIORITY)
 	};
+	struct capture_control capc = {
+		.cc = &cc,
+		.page = NULL,
+	};
 
-	return compact_zone(&cc, capc);
+	/*
+	 * Make sure the structs are really initialized before we expose the
+	 * capture control, in case we are interrupted and the interrupt handler
+	 * frees a page.
+	 */
+	barrier();
+	WRITE_ONCE(current->capture_control, &capc);
+
+	ret = compact_zone(&cc, &capc);
+
+	/*
+	 * Make sure we hide capture control first before we read the captured
+	 * page pointer, otherwise an interrupt could free and capture a page
+	 * and we would leak it.
+	 */
+	WRITE_ONCE(current->capture_control, NULL);
+	*capture = READ_ONCE(capc.page);
+	/*
+	 * Technically, it is also possible that compaction is skipped but
+	 * the page is still captured out of luck(IRQ came and freed the page).
+	 * Returning COMPACT_SUCCESS in such cases helps in properly accounting
+	 * the COMPACT[STALL|FAIL] when compaction is skipped.
+	 */
+	if (*capture)
+		ret = COMPACT_SUCCESS;
+
+	return ret;
 }
 
 /**
  * try_to_compact_pages - Direct compact to satisfy a high-order allocation
  * @gfp_mask: The GFP mask of the current allocation
- * @order: The order to try to make available
+ * @order: The order of the current allocation
  * @alloc_flags: The allocation flags of the current allocation
  * @ac: The context of current allocation
  * @prio: Determines how hard direct compaction should try to succeed
- * @capc: Free page capture bypassing the freelist
+ * @capture: Pointer to free page created by compaction will be stored here
  *
  * This is the main entry point for direct page compaction.
  */
 enum compact_result try_to_compact_pages(gfp_t gfp_mask, unsigned int order,
 		unsigned int alloc_flags, const struct alloc_context *ac,
-		enum compact_priority prio, struct capture_control *capc)
+		enum compact_priority prio, struct page **capture)
 {
 	struct zoneref *z;
 	struct zone *zone;
@@ -2860,17 +2860,8 @@ enum compact_result try_to_compact_pages(gfp_t gfp_mask, unsigned int order,
 			continue;
 		}
 
-		WRITE_ONCE(capc->zone, zone);
-
 		status = compact_zone_order(zone, order, gfp_mask, prio,
-				alloc_flags, ac->highest_zoneidx, capc);
-
-		WRITE_ONCE(capc->zone, NULL);
-
-		/* Stop if a page has been captured */
-		if (READ_ONCE(capc->page))
-			status = COMPACT_SUCCESS;
-
+				alloc_flags, ac->highest_zoneidx, capture);
 		rc = max(status, rc);
 
 		/* The allocation should succeed, stop compacting */

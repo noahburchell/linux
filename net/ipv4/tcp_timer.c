@@ -297,7 +297,7 @@ static int tcp_write_timeout(struct sock *sk)
 		return 1;
 	}
 
-	if (__sk_rethink_txhash_reset_dst(sk)) {
+	if (sk_rethink_txhash(sk)) {
 		WRITE_ONCE(tp->timeout_rehash, tp->timeout_rehash + 1);
 		__NET_INC_STATS(sock_net(sk), LINUX_MIB_TCPTIMEOUTREHASH);
 	}
@@ -334,9 +334,7 @@ void tcp_delack_timer_handler(struct sock *sk)
 	if (inet_csk_ack_scheduled(sk)) {
 		if (!inet_csk_in_pingpong_mode(sk)) {
 			/* Delayed ACK missed: inflate ATO. */
-			icsk->icsk_ack.ato = min3((u32)icsk->icsk_ack.ato << 1,
-						  icsk->icsk_rto,
-						  (u32)TCP_DELACK_MAX);
+			icsk->icsk_ack.ato = min_t(u32, icsk->icsk_ack.ato << 1, icsk->icsk_rto);
 		} else {
 			/* Delayed ACK missed: leave pingpong mode and
 			 * deflate ATO.
@@ -708,6 +706,7 @@ void tcp_write_timer_handler(struct sock *sk)
 			       tcp_timeout_expires(sk));
 		return;
 	}
+	tcp_rate_check_app_limited(sk);
 	tcp_mstamp_refresh(tcp_sk(sk));
 	event = icsk->icsk_pending;
 
@@ -750,7 +749,7 @@ out:
 	sock_put(sk);
 }
 
-noinline_for_tracing void tcp_syn_ack_timeout(const struct request_sock *req)
+void tcp_syn_ack_timeout(const struct request_sock *req)
 {
 	struct net *net = read_pnet(&inet_rsk(req)->ireq_net);
 

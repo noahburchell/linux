@@ -67,6 +67,7 @@ static struct workqueue_struct *kpcintb_workqueue;
 #define NTB_MW_OFFSET			2
 #define DB_COUNT_MASK			GENMASK(15, 0)
 #define MSIX_ENABLE			BIT(16)
+#define MAX_DB_COUNT			32
 #define MAX_MW				4
 
 /* Limit per-work execution to avoid monopolizing kworker on doorbell storms. */
@@ -87,9 +88,6 @@ enum epf_irq_slot {
 	EPF_IRQ_RESERVED_DB, /* Historically skipped slot */
 	EPF_IRQ_DB_START,
 };
-
-#define MIN_DB_COUNT			(EPF_IRQ_DB_START + 1)
-#define MAX_DB_COUNT			32
 
 /*
  * +--------------------------------------------------+ Base
@@ -148,11 +146,6 @@ struct epf_ntb {
 	u16 vntb_vid;
 
 	bool linkup;
-
-	/*
-	 * True when doorbells are interrupt-driven (MSI or embedded), false
-	 * when polled.
-	 */
 	bool msi_doorbell;
 	u32 spad_size;
 
@@ -514,9 +507,9 @@ static int epf_ntb_configure_interrupt(struct epf_ntb *ntb)
 		return -EINVAL;
 	}
 
-	if (ntb->db_count < MIN_DB_COUNT || ntb->db_count > MAX_DB_COUNT) {
-		dev_err(dev, "DB count %d out of range (%d - %d)\n",
-			ntb->db_count, MIN_DB_COUNT, MAX_DB_COUNT);
+	if (!ntb->db_count || ntb->db_count > MAX_DB_COUNT) {
+		dev_err(dev, "DB count %d out of range (1 - %d)\n",
+			ntb->db_count, MAX_DB_COUNT);
 		return -EINVAL;
 	}
 
@@ -532,17 +525,6 @@ static int epf_ntb_configure_interrupt(struct epf_ntb *ntb)
 	}
 
 	return 0;
-}
-
-static bool epf_ntb_db_irq_is_duplicated(const struct pci_epf *epf, unsigned int idx)
-{
-	unsigned int i;
-
-	for (i = 0; i < idx; i++)
-		if (epf->db_msg[i].virq == epf->db_msg[idx].virq)
-			return true;
-
-	return false;
 }
 
 static int epf_ntb_db_bar_init_msi_doorbell(struct epf_ntb *ntb,
@@ -561,24 +543,9 @@ static int epf_ntb_db_bar_init_msi_doorbell(struct epf_ntb *ntb,
 	if (ret)
 		return ret;
 
-	/*
-	 * The doorbell target may already be exposed by a platform-owned fixed
-	 * BAR. In that case, we must reuse it and the requested db_bar must
-	 * match.
-	 */
-	if (epf->db_msg[0].bar != NO_BAR && epf->db_msg[0].bar != barno) {
-		ret = -EINVAL;
-		goto err_free_doorbell;
-	}
-
 	for (req = 0; req < ntb->db_count; req++) {
-		/* Avoid requesting duplicate handlers */
-		if (epf_ntb_db_irq_is_duplicated(epf, req))
-			continue;
-
 		ret = request_irq(epf->db_msg[req].virq, epf_ntb_doorbell_handler,
-				  epf->db_msg[req].irq_flags, "pci_epf_vntb_db",
-				  ntb);
+				  0, "pci_epf_vntb_db", ntb);
 
 		if (ret) {
 			dev_err(&epf->dev,
@@ -588,22 +555,6 @@ static int epf_ntb_db_bar_init_msi_doorbell(struct epf_ntb *ntb,
 		}
 	}
 
-	if (epf->db_msg[0].bar != NO_BAR) {
-		for (i = 0; i < ntb->db_count; i++) {
-			msg = &epf->db_msg[i].msg;
-
-			if (epf->db_msg[i].bar != barno) {
-				ret = -EINVAL;
-				goto err_free_irq;
-			}
-
-			ntb->reg->db_data[i] = msg->data;
-			ntb->reg->db_offset[i] = epf->db_msg[i].offset;
-		}
-		goto out;
-	}
-
-	/* Program inbound mapping for the doorbell */
 	msg = &epf->db_msg[0].msg;
 
 	high = 0;
@@ -650,7 +601,6 @@ static int epf_ntb_db_bar_init_msi_doorbell(struct epf_ntb *ntb,
 		ntb->reg->db_offset[i] = offset;
 	}
 
-out:
 	ntb->reg->db_entry_size = 0;
 
 	ntb->msi_doorbell = true;
@@ -658,13 +608,9 @@ out:
 	return 0;
 
 err_free_irq:
-	for (req--; req >= 0; req--) {
-		if (epf_ntb_db_irq_is_duplicated(epf, req))
-			continue;
+	for (req--; req >= 0; req--)
 		free_irq(epf->db_msg[req].virq, ntb);
-	}
 
-err_free_doorbell:
 	pci_epf_free_doorbell(ntb->epf);
 	return ret;
 }
@@ -730,11 +676,8 @@ static void epf_ntb_db_bar_clear(struct epf_ntb *ntb)
 	if (ntb->msi_doorbell) {
 		int i;
 
-		for (i = 0; i < ntb->db_count; i++) {
-			if (epf_ntb_db_irq_is_duplicated(ntb->epf, i))
-				continue;
+		for (i = 0; i < ntb->db_count; i++)
 			free_irq(ntb->epf->db_msg[i].virq, ntb);
-		}
 	}
 
 	if (ntb->epf->db_msg)
@@ -1020,11 +963,6 @@ static void epf_ntb_epc_cleanup(struct epf_ntb *ntb)
 	epf_ntb_config_sspad_bar_clear(ntb);
 }
 
-static bool epf_ntb_epc_attached(struct epf_ntb *ntb)
-{
-	return ntb->epf->epc || ntb->epf->sec_epc;
-}
-
 #define EPF_NTB_R(_name)						\
 static ssize_t epf_ntb_##_name##_show(struct config_item *item,		\
 				      char *page)			\
@@ -1043,9 +981,6 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	struct epf_ntb *ntb = to_epf_ntb(group);			\
 	u32 val;							\
 	int ret;							\
-									\
-	if (epf_ntb_epc_attached(ntb))					\
-		return -EOPNOTSUPP;					\
 									\
 	ret = kstrtou32(page, 0, &val);					\
 	if (ret)							\
@@ -1089,9 +1024,6 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 	u64 val;							\
 	int ret;							\
 									\
-	if (epf_ntb_epc_attached(ntb))					\
-		return -EOPNOTSUPP;					\
-									\
 	ret = kstrtou64(page, 0, &val);					\
 	if (ret)							\
 		return ret;						\
@@ -1130,9 +1062,6 @@ static ssize_t epf_ntb_##_name##_store(struct config_item *item,	\
 		int val;						\
 		int ret;						\
 									\
-		if (epf_ntb_epc_attached(ntb))				\
-			return -EOPNOTSUPP;				\
-									\
 		ret = kstrtoint(page, 0, &val);				\
 		if (ret)						\
 			return ret;					\
@@ -1153,9 +1082,6 @@ static ssize_t epf_ntb_num_mws_store(struct config_item *item,
 	u32 val;
 	int ret;
 
-	if (epf_ntb_epc_attached(ntb))
-		return -EOPNOTSUPP;
-
 	ret = kstrtou32(page, 0, &val);
 	if (ret)
 		return ret;
@@ -1168,32 +1094,10 @@ static ssize_t epf_ntb_num_mws_store(struct config_item *item,
 	return len;
 }
 
-static ssize_t epf_ntb_db_count_store(struct config_item *item,
-				      const char *page, size_t len)
-{
-	struct config_group *group = to_config_group(item);
-	struct epf_ntb *ntb = to_epf_ntb(group);
-	u32 val;
-	int ret;
-
-	if (epf_ntb_epc_attached(ntb))
-		return -EOPNOTSUPP;
-
-	ret = kstrtou32(page, 0, &val);
-	if (ret)
-		return ret;
-
-	if (val < MIN_DB_COUNT || val > MAX_DB_COUNT)
-		return -EINVAL;
-
-	WRITE_ONCE(ntb->db_count, val);
-
-	return len;
-}
-
 EPF_NTB_R(spad_count)
 EPF_NTB_W(spad_count)
 EPF_NTB_R(db_count)
+EPF_NTB_W(db_count)
 EPF_NTB_R(num_mws)
 EPF_NTB_R(vbus_number)
 EPF_NTB_W(vbus_number)
@@ -1362,48 +1266,12 @@ static int vntb_epf_peer_mw_count(struct ntb_dev *ntb)
 	return ntb_ndev(ntb)->num_mws;
 }
 
-static int vntb_epf_db_vector_count(struct ntb_dev *ntb)
-{
-	struct epf_ntb *ndev = ntb_ndev(ntb);
-	u32 db_count = READ_ONCE(ndev->db_count);
-
-	/*
-	 * db_count is the total number of doorbell slots exposed to
-	 * the peer, including:
-	 *   - slot #0 reserved for link events
-	 *   - slot #1 historically unused (kept for protocol compatibility)
-	 *
-	 * Report only usable per-vector doorbell interrupts.
-	 */
-	if (db_count < MIN_DB_COUNT || db_count > MAX_DB_COUNT)
-		return 0;
-
-	return db_count - EPF_IRQ_DB_START;
-}
-
 static u64 vntb_epf_db_valid_mask(struct ntb_dev *ntb)
 {
-	int nr_vec = vntb_epf_db_vector_count(ntb);
-
-	if (!nr_vec)
+	if (ntb_ndev(ntb)->db_count < EPF_IRQ_DB_START)
 		return 0;
 
-	return GENMASK_ULL(nr_vec - 1, 0);
-}
-
-static u64 vntb_epf_db_vector_mask(struct ntb_dev *ntb, int db_vector)
-{
-	int nr_vec;
-
-	/*
-	 * Doorbell vectors are numbered [0 .. nr_vec - 1], where nr_vec
-	 * excludes the two reserved slots described above.
-	 */
-	nr_vec = vntb_epf_db_vector_count(ntb);
-	if (db_vector < 0 || db_vector >= nr_vec)
-		return 0;
-
-	return BIT_ULL(db_vector);
+	return BIT_ULL(ntb_ndev(ntb)->db_count - EPF_IRQ_DB_START) - 1;
 }
 
 static int vntb_epf_db_set_mask(struct ntb_dev *ntb, u64 db_bits)
@@ -1653,8 +1521,6 @@ static const struct ntb_dev_ops vntb_epf_ops = {
 	.spad_count		= vntb_epf_spad_count,
 	.peer_mw_count		= vntb_epf_peer_mw_count,
 	.db_valid_mask		= vntb_epf_db_valid_mask,
-	.db_vector_count	= vntb_epf_db_vector_count,
-	.db_vector_mask		= vntb_epf_db_vector_mask,
 	.db_set_mask		= vntb_epf_db_set_mask,
 	.mw_set_trans		= vntb_epf_mw_set_trans,
 	.mw_clear_trans		= vntb_epf_mw_clear_trans,

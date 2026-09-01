@@ -23,7 +23,6 @@
  * USE OR OTHER DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/cgroup_dmem.h>
 #include <linux/limits.h>
 
 #include <drm/ttm/ttm_range_manager.h>
@@ -190,9 +189,7 @@ nouveau_ttm_init_vram(struct nouveau_drm *drm)
 		man->func = &nouveau_vram_manager;
 
 		man->cg = drmm_cgroup_register_region(drm->dev, "vram",
-						      &(struct dmem_cgroup_init){
-							      .size = drm->gem.vram_available
-						      });
+						      drm->gem.vram_available);
 		if (IS_ERR(man->cg))
 			return PTR_ERR(man->cg);
 

@@ -308,16 +308,9 @@ static int uda1342_suspend(struct device *dev)
 static int uda1342_resume(struct device *dev)
 {
 	struct uda1342_priv *uda1342 = dev_get_drvdata(dev);
-	int ret;
 
-	regcache_cache_only(uda1342->regmap, false);
 	regcache_mark_dirty(uda1342->regmap);
-	ret = regcache_sync(uda1342->regmap);
-	if (ret) {
-		regcache_cache_only(uda1342->regmap, true);
-		regcache_mark_dirty(uda1342->regmap);
-		return ret;
-	}
+	regcache_sync(uda1342->regmap);
 
 	return 0;
 }
@@ -326,7 +319,7 @@ static DEFINE_RUNTIME_DEV_PM_OPS(uda1342_pm_ops,
 				 uda1342_suspend, uda1342_resume, NULL);
 
 static const struct i2c_device_id uda1342_i2c_id[] = {
-	 { .name = "uda1342" },
+	 { "uda1342" },
 	 { }
 };
 MODULE_DEVICE_TABLE(i2c, uda1342_i2c_id);

@@ -355,13 +355,13 @@ drm_atomic_set_crtc_for_connector(struct drm_connector_state *conn_state,
 }
 EXPORT_SYMBOL(drm_atomic_set_crtc_for_connector);
 
-static void set_out_fence_for_crtc(struct drm_atomic_commit *state,
+static void set_out_fence_for_crtc(struct drm_atomic_state *state,
 				   struct drm_crtc *crtc, s32 __user *fence_ptr)
 {
 	state->crtcs[drm_crtc_index(crtc)].out_fence_ptr = fence_ptr;
 }
 
-static s32 __user *get_out_fence_for_crtc(struct drm_atomic_commit *state,
+static s32 __user *get_out_fence_for_crtc(struct drm_atomic_state *state,
 					  struct drm_crtc *crtc)
 {
 	s32 __user *fence_ptr;
@@ -372,7 +372,7 @@ static s32 __user *get_out_fence_for_crtc(struct drm_atomic_commit *state,
 	return fence_ptr;
 }
 
-static int set_out_fence_for_connector(struct drm_atomic_commit *state,
+static int set_out_fence_for_connector(struct drm_atomic_state *state,
 					struct drm_connector *connector,
 					s32 __user *fence_ptr)
 {
@@ -389,7 +389,7 @@ static int set_out_fence_for_connector(struct drm_atomic_commit *state,
 	return 0;
 }
 
-static s32 __user *get_out_fence_for_connector(struct drm_atomic_commit *state,
+static s32 __user *get_out_fence_for_connector(struct drm_atomic_state *state,
 					       struct drm_connector *connector)
 {
 	unsigned int index = drm_connector_index(connector);
@@ -930,6 +930,8 @@ static int drm_atomic_connector_set_property(struct drm_connector *connector,
 		state->content_type = val;
 	} else if (property == connector->scaling_mode_property) {
 		state->scaling_mode = val;
+	} else if (property == connector->allm_mode_property) {
+		state->allm_mode = val;
 	} else if (property == config->content_protection_property) {
 		if (val == DRM_MODE_CONTENT_PROTECTION_ENABLED) {
 			drm_dbg_kms(dev, "only drivers can set CP Enabled\n");
@@ -960,8 +962,6 @@ static int drm_atomic_connector_set_property(struct drm_connector *connector,
 		state->privacy_screen_sw_state = val;
 	} else if (property == connector->broadcast_rgb_property) {
 		state->hdmi.broadcast_rgb = val;
-	} else if (property == connector->color_format_property) {
-		state->color_format = val;
 	} else if (connector->funcs->atomic_set_property) {
 		return connector->funcs->atomic_set_property(connector,
 				state, property, val);
@@ -1029,6 +1029,8 @@ drm_atomic_connector_get_property(struct drm_connector *connector,
 		*val = state->colorspace;
 	} else if (property == connector->scaling_mode_property) {
 		*val = state->scaling_mode;
+	} else if (property == connector->allm_mode_property) {
+		*val = state->allm_mode;
 	} else if (property == config->hdr_output_metadata_property) {
 		*val = state->hdr_output_metadata ?
 			state->hdr_output_metadata->base.id : 0;
@@ -1047,8 +1049,6 @@ drm_atomic_connector_get_property(struct drm_connector *connector,
 		*val = state->privacy_screen_sw_state;
 	} else if (property == connector->broadcast_rgb_property) {
 		*val = state->hdmi.broadcast_rgb;
-	} else if (property == connector->color_format_property) {
-		*val = state->color_format;
 	} else if (connector->funcs->atomic_get_property) {
 		return connector->funcs->atomic_get_property(connector,
 				state, property, val);
@@ -1133,7 +1133,7 @@ static struct drm_pending_vblank_event *create_vblank_event(
 	return e;
 }
 
-int drm_atomic_connector_commit_dpms(struct drm_atomic_commit *state,
+int drm_atomic_connector_commit_dpms(struct drm_atomic_state *state,
 				     struct drm_connector *connector,
 				     int mode)
 {
@@ -1200,7 +1200,7 @@ static int drm_atomic_check_prop_changes(int ret, uint64_t old_val, uint64_t pro
 	return 0;
 }
 
-int drm_atomic_set_property(struct drm_atomic_commit *state,
+int drm_atomic_set_property(struct drm_atomic_state *state,
 			    struct drm_file *file_priv,
 			    struct drm_mode_object *obj,
 			    struct drm_property *prop,
@@ -1416,7 +1416,7 @@ static int setup_out_fence(struct drm_out_fence_state *fence_state,
 }
 
 static int prepare_signaling(struct drm_device *dev,
-				  struct drm_atomic_commit *state,
+				  struct drm_atomic_state *state,
 				  struct drm_mode_atomic *arg,
 				  struct drm_file *file_priv,
 				  struct drm_out_fence_state **fence_state,
@@ -1541,7 +1541,7 @@ static int prepare_signaling(struct drm_device *dev,
 }
 
 static void complete_signaling(struct drm_device *dev,
-			       struct drm_atomic_commit *state,
+			       struct drm_atomic_state *state,
 			       struct drm_out_fence_state *fence_state,
 			       unsigned int num_fences,
 			       bool install_fds)
@@ -1564,7 +1564,7 @@ static void complete_signaling(struct drm_device *dev,
 		/*
 		 * Free the allocated event. drm_atomic_helper_setup_commit
 		 * can allocate an event too, so only free it if it's ours
-		 * to prevent a double free in drm_atomic_commit_clear.
+		 * to prevent a double free in drm_atomic_state_clear.
 		 */
 		if (event && (event->base.fence || event->base.file_priv)) {
 			drm_event_cancel_free(dev, &event->base);
@@ -1591,7 +1591,7 @@ static void complete_signaling(struct drm_device *dev,
 }
 
 static void
-set_async_flip(struct drm_atomic_commit *state)
+set_async_flip(struct drm_atomic_state *state)
 {
 	struct drm_crtc *crtc;
 	struct drm_crtc_state *crtc_state;
@@ -1611,7 +1611,7 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 	uint32_t __user *props_ptr = (uint32_t __user *)(unsigned long)(arg->props_ptr);
 	uint64_t __user *prop_values_ptr = (uint64_t __user *)(unsigned long)(arg->prop_values_ptr);
 	unsigned int copied_objs, copied_props;
-	struct drm_atomic_commit *state;
+	struct drm_atomic_state *state;
 	struct drm_modeset_acquire_ctx ctx;
 	struct drm_out_fence_state *fence_state;
 	int ret = 0;
@@ -1660,7 +1660,7 @@ int drm_mode_atomic_ioctl(struct drm_device *dev,
 		return -EINVAL;
 	}
 
-	state = drm_atomic_commit_alloc(dev);
+	state = drm_atomic_state_alloc(dev);
 	if (!state)
 		return -ENOMEM;
 
@@ -1768,13 +1768,13 @@ out:
 	complete_signaling(dev, state, fence_state, num_fences, !ret);
 
 	if (ret == -EDEADLK) {
-		drm_atomic_commit_clear(state);
+		drm_atomic_state_clear(state);
 		ret = drm_modeset_backoff(&ctx);
 		if (!ret)
 			goto retry;
 	}
 
-	drm_atomic_commit_put(state);
+	drm_atomic_state_put(state);
 
 	drm_modeset_drop_locks(&ctx);
 	drm_modeset_acquire_fini(&ctx);

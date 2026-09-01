@@ -204,7 +204,7 @@ int hfsplus_find_cat(struct super_block *sb, u32 cnid,
 		return err;
 
 	type = be16_to_cpu(tmp.type);
-	if (!is_hfs_thread_record_type(type)) {
+	if (type != HFSPLUS_FOLDER_THREAD && type != HFSPLUS_FILE_THREAD) {
 		pr_err("found bad thread record in catalog\n");
 		return -EIO;
 	}
@@ -333,6 +333,7 @@ int hfsplus_delete_cat(u32 cnid, struct inode *dir, const struct qstr *str)
 	struct super_block *sb = dir->i_sb;
 	struct hfs_find_data fd;
 	struct hfsplus_fork_raw fork;
+	struct list_head *pos;
 	int err, off;
 	u16 type;
 
@@ -350,22 +351,23 @@ int hfsplus_delete_cat(u32 cnid, struct inode *dir, const struct qstr *str)
 		goto out;
 
 	if (!str) {
-		hfsplus_cat_entry entry = {0};
+		int len;
 
 		hfsplus_cat_build_key_with_cnid(sb, fd.search_key, cnid);
-		err = hfsplus_brec_read_cat(&fd, &entry);
+		err = hfs_brec_find(&fd, hfs_find_rec_by_key);
 		if (err)
 			goto out;
 
-		type = be16_to_cpu(entry.type);
-		if (!is_hfs_thread_record_type(type)) {
-			pr_err("found bad thread record in catalog\n");
-			err = -EIO;
-			goto out;
-		}
-
-		hfsplus_cat_build_key_uni(fd.search_key, dir->i_ino,
-					  &entry.thread.nodeName);
+		off = fd.entryoffset +
+			offsetof(struct hfsplus_cat_thread, nodeName);
+		fd.search_key->cat.parent = cpu_to_be32(dir->i_ino);
+		hfs_bnode_read(fd.bnode,
+			&fd.search_key->cat.name.length, off, 2);
+		len = be16_to_cpu(fd.search_key->cat.name.length) * 2;
+		hfs_bnode_read(fd.bnode,
+			&fd.search_key->cat.name.unicode,
+			off + 2, len);
+		fd.search_key->key_len = cpu_to_be16(6 + len);
 	} else {
 		err = hfsplus_cat_build_key(sb, fd.search_key, dir->i_ino, str);
 		if (unlikely(err))
@@ -389,6 +391,16 @@ int hfsplus_delete_cat(u32 cnid, struct inode *dir, const struct qstr *str)
 		hfs_bnode_read(fd.bnode, &fork, off, sizeof(fork));
 		hfsplus_free_fork(sb, cnid, &fork, HFSPLUS_TYPE_RSRC);
 	}
+
+	/* we only need to take spinlock for exclusion with ->release() */
+	spin_lock(&HFSPLUS_I(dir)->open_dir_lock);
+	list_for_each(pos, &HFSPLUS_I(dir)->open_dir_list) {
+		struct hfsplus_readdir_data *rd =
+			list_entry(pos, struct hfsplus_readdir_data, list);
+		if (fd.tree->keycmp(fd.search_key, (void *)&rd->key) < 0)
+			rd->file->f_pos--;
+	}
+	spin_unlock(&HFSPLUS_I(dir)->open_dir_lock);
 
 	err = hfs_brec_remove(&fd);
 	if (err)

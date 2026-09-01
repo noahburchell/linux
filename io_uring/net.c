@@ -236,6 +236,39 @@ static int io_net_import_vec(struct io_kiocb *req, struct io_async_msghdr *iomsg
 	return 0;
 }
 
+static int io_compat_msg_copy_hdr(struct io_kiocb *req,
+				  struct io_async_msghdr *iomsg,
+				  struct compat_msghdr *msg, int ddir,
+				  struct sockaddr __user **save_addr)
+{
+	struct io_sr_msg *sr = io_kiocb_to_cmd(req, struct io_sr_msg);
+	struct compat_iovec __user *uiov;
+	int ret;
+
+	if (copy_from_user(msg, sr->umsg_compat, sizeof(*msg)))
+		return -EFAULT;
+
+	ret = __get_compat_msghdr(&iomsg->msg, msg, save_addr);
+	if (ret)
+		return ret;
+
+	uiov = compat_ptr(msg->msg_iov);
+	if (req->flags & REQ_F_BUFFER_SELECT) {
+		if (msg->msg_iovlen == 0) {
+			sr->len = 0;
+		} else if (msg->msg_iovlen > 1) {
+			return -EINVAL;
+		} else {
+			struct compat_iovec tmp_iov;
+
+			if (copy_from_user(&tmp_iov, uiov, sizeof(tmp_iov)))
+				return -EFAULT;
+			sr->len = tmp_iov.iov_len;
+		}
+	}
+	return 0;
+}
+
 static int io_copy_msghdr_from_user(struct user_msghdr *msg,
 				    struct user_msghdr __user *umsg)
 {
@@ -255,10 +288,11 @@ ua_end:
 }
 
 static int io_msg_copy_hdr(struct io_kiocb *req, struct io_async_msghdr *iomsg,
-			   struct user_msghdr *msg,
+			   struct user_msghdr *msg, int ddir,
 			   struct sockaddr __user **save_addr)
 {
 	struct io_sr_msg *sr = io_kiocb_to_cmd(req, struct io_sr_msg);
+	struct user_msghdr __user *umsg = sr->umsg;
 	int ret;
 
 	iomsg->msg.msg_name = &iomsg->addr;
@@ -267,10 +301,7 @@ static int io_msg_copy_hdr(struct io_kiocb *req, struct io_async_msghdr *iomsg,
 	if (io_is_compat(req->ctx)) {
 		struct compat_msghdr cmsg;
 
-		if (copy_from_user(&cmsg, sr->umsg_compat, sizeof(cmsg)))
-			return -EFAULT;
-
-		ret = __get_compat_msghdr(&iomsg->msg, &cmsg, save_addr);
+		ret = io_compat_msg_copy_hdr(req, iomsg, &cmsg, ddir, save_addr);
 		if (ret)
 			return ret;
 
@@ -279,17 +310,18 @@ static int io_msg_copy_hdr(struct io_kiocb *req, struct io_async_msghdr *iomsg,
 		msg->msg_controllen = cmsg.msg_controllen;
 		msg->msg_iov = compat_ptr(cmsg.msg_iov);
 		msg->msg_iovlen = cmsg.msg_iovlen;
-	} else {
-		ret = io_copy_msghdr_from_user(msg, sr->umsg);
-		if (unlikely(ret))
-			return ret;
-
-		msg->msg_flags = 0;
-
-		ret = __copy_msghdr(&iomsg->msg, msg, save_addr);
-		if (ret)
-			return ret;
+		return 0;
 	}
+
+	ret = io_copy_msghdr_from_user(msg, umsg);
+	if (unlikely(ret))
+		return ret;
+
+	msg->msg_flags = 0;
+
+	ret = __copy_msghdr(&iomsg->msg, msg, save_addr);
+	if (ret)
+		return ret;
 
 	if (req->flags & REQ_F_BUFFER_SELECT) {
 		if (msg->msg_iovlen == 0) {
@@ -297,13 +329,12 @@ static int io_msg_copy_hdr(struct io_kiocb *req, struct io_async_msghdr *iomsg,
 		} else if (msg->msg_iovlen > 1) {
 			return -EINVAL;
 		} else {
-			struct iovec fast_iov, *iov;
+			struct iovec __user *uiov = msg->msg_iov;
+			struct iovec tmp_iov;
 
-			iov = iovec_from_user(msg->msg_iov, 1, 1, &fast_iov,
-					      io_is_compat(req->ctx));
-			if (IS_ERR(iov))
-				return PTR_ERR(iov);
-			sr->len = iov->iov_len;
+			if (copy_from_user(&tmp_iov, uiov, sizeof(tmp_iov)))
+				return -EFAULT;
+			sr->len = tmp_iov.iov_len;
 		}
 	}
 	return 0;
@@ -371,7 +402,7 @@ static int io_sendmsg_setup(struct io_kiocb *req, const struct io_uring_sqe *sqe
 
 	sr->flags |= IORING_SEND_VECTORIZED;
 	sr->umsg = u64_to_user_ptr(READ_ONCE(sqe->addr));
-	ret = io_msg_copy_hdr(req, kmsg, &msg, NULL);
+	ret = io_msg_copy_hdr(req, kmsg, &msg, ITER_SOURCE, NULL);
 	if (unlikely(ret))
 		return ret;
 	/* save msg_control as sys_sendmsg() overwrites it */
@@ -387,8 +418,7 @@ static int io_sendmsg_setup(struct io_kiocb *req, const struct io_uring_sqe *sqe
 	return io_net_import_vec(req, kmsg, msg.msg_iov, msg.msg_iovlen, ITER_SOURCE);
 }
 
-#define SENDMSG_FLAGS (IORING_RECVSEND_POLL_FIRST | IORING_RECVSEND_BUNDLE | \
-			IORING_SEND_VECTORIZED | IORING_RECVSEND_FIXED_BUF)
+#define SENDMSG_FLAGS (IORING_RECVSEND_POLL_FIRST | IORING_RECVSEND_BUNDLE | IORING_SEND_VECTORIZED)
 
 int io_sendmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
@@ -401,20 +431,11 @@ int io_sendmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	sr->flags = READ_ONCE(sqe->ioprio);
 	if (sr->flags & ~SENDMSG_FLAGS)
 		return -EINVAL;
-	if (sr->flags & IORING_RECVSEND_FIXED_BUF) {
-		/* registered buffer send only supported for plain IORING_OP_SEND */
-		if (req->opcode != IORING_OP_SEND ||
-		    (req->flags & REQ_F_BUFFER_SELECT) ||
-		    (sr->flags & (IORING_RECVSEND_BUNDLE|IORING_SEND_VECTORIZED)))
-			return -EINVAL;
-		req->buf_index = READ_ONCE(sqe->buf_index);
-	}
 	sr->msg_flags = READ_ONCE(sqe->msg_flags) | MSG_NOSIGNAL;
 	if (sr->msg_flags & MSG_DONTWAIT)
 		req->flags |= REQ_F_NOWAIT;
 	if (req->flags & REQ_F_BUFFER_SELECT)
 		sr->buf_group = req->buf_index;
-	sr->mshot_total_len = sr->mshot_len = 0;
 	if (sr->flags & IORING_RECVSEND_BUNDLE) {
 		if (req->opcode == IORING_OP_SENDMSG)
 			return -EINVAL;
@@ -641,15 +662,6 @@ int io_send(struct io_kiocb *req, unsigned int issue_flags)
 	    (sr->flags & IORING_RECVSEND_POLL_FIRST))
 		return -EAGAIN;
 
-	if (req->flags & REQ_F_IMPORT_BUFFER) {
-		ret = io_import_reg_buf(req, &kmsg->msg.msg_iter,
-					(u64)(uintptr_t)sr->buf, sr->len,
-					ITER_SOURCE, issue_flags);
-		if (unlikely(ret))
-			return ret;
-		req->flags &= ~REQ_F_IMPORT_BUFFER;
-	}
-
 	flags = sr->msg_flags;
 	if (issue_flags & IO_URING_F_NONBLOCK)
 		flags |= MSG_DONTWAIT;
@@ -730,7 +742,7 @@ static int io_recvmsg_copy_hdr(struct io_kiocb *req,
 	struct user_msghdr msg;
 	int ret;
 
-	ret = io_msg_copy_hdr(req, iomsg, &msg, &iomsg->uaddr);
+	ret = io_msg_copy_hdr(req, iomsg, &msg, ITER_DEST, &iomsg->uaddr);
 	if (unlikely(ret))
 		return ret;
 
@@ -760,14 +772,11 @@ static int io_recvmsg_prep_setup(struct io_kiocb *req)
 		kmsg->msg.msg_control = NULL;
 		kmsg->msg.msg_get_inq = 1;
 		kmsg->msg.msg_controllen = 0;
+		kmsg->msg.msg_iocb = NULL;
 		kmsg->msg.msg_ubuf = NULL;
 
 		if (req->flags & REQ_F_BUFFER_SELECT)
 			return 0;
-		if (sr->flags & IORING_RECVSEND_FIXED_BUF) {
-			req->flags |= REQ_F_IMPORT_BUFFER;
-			return 0;
-		}
 		return import_ubuf(ITER_DEST, sr->buf, sr->len,
 				   &kmsg->msg.msg_iter);
 	}
@@ -776,7 +785,7 @@ static int io_recvmsg_prep_setup(struct io_kiocb *req)
 }
 
 #define RECVMSG_FLAGS (IORING_RECVSEND_POLL_FIRST | IORING_RECV_MULTISHOT | \
-			IORING_RECVSEND_BUNDLE | IORING_RECVSEND_FIXED_BUF)
+			IORING_RECVSEND_BUNDLE)
 
 int io_recvmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
@@ -794,14 +803,6 @@ int io_recvmsg_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	sr->flags = READ_ONCE(sqe->ioprio);
 	if (sr->flags & ~RECVMSG_FLAGS)
 		return -EINVAL;
-	if (sr->flags & IORING_RECVSEND_FIXED_BUF) {
-		/* registered buffer recv only for plain IORING_OP_RECV */
-		if (req->opcode != IORING_OP_RECV ||
-		    (req->flags & REQ_F_BUFFER_SELECT) ||
-		    (sr->flags & (IORING_RECV_MULTISHOT | IORING_RECVSEND_BUNDLE)))
-			return -EINVAL;
-		req->buf_index = READ_ONCE(sqe->buf_index);
-	}
 	sr->msg_flags = READ_ONCE(sqe->msg_flags);
 	if (sr->msg_flags & MSG_DONTWAIT)
 		req->flags |= REQ_F_NOWAIT;
@@ -1187,29 +1188,17 @@ int io_recv(struct io_kiocb *req, unsigned int issue_flags)
 	bool force_nonblock = issue_flags & IO_URING_F_NONBLOCK;
 	bool mshot_finished;
 
-	sock = sock_from_file(req->file);
-	if (unlikely(!sock))
-		return -ENOTSOCK;
-
 	if (!(req->flags & REQ_F_POLLED) &&
 	    (sr->flags & IORING_RECVSEND_POLL_FIRST))
 		return -EAGAIN;
 
+	sock = sock_from_file(req->file);
+	if (unlikely(!sock))
+		return -ENOTSOCK;
+
 	flags = sr->msg_flags;
 	if (force_nonblock)
 		flags |= MSG_DONTWAIT;
-
-	if (req->flags & REQ_F_IMPORT_BUFFER) {
-		ret = io_import_reg_buf(req, &kmsg->msg.msg_iter,
-					(u64)(uintptr_t)sr->buf, sr->len,
-					ITER_DEST, issue_flags);
-		if (unlikely(ret)) {
-			kmsg->msg.msg_inq = -1;
-			sel.buf_list = NULL;
-			goto out_free;
-		}
-		req->flags &= ~REQ_F_IMPORT_BUFFER;
-	}
 
 retry_multishot:
 	sel.buf_list = NULL;
@@ -1299,13 +1288,13 @@ int io_recvzc(struct io_kiocb *req, unsigned int issue_flags)
 	unsigned int len;
 	int ret;
 
-	sock = sock_from_file(req->file);
-	if (unlikely(!sock))
-		return -ENOTSOCK;
-
 	if (!(req->flags & REQ_F_POLLED) &&
 	    (zc->flags & IORING_RECVSEND_POLL_FIRST))
 		return -EAGAIN;
+
+	sock = sock_from_file(req->file);
+	if (unlikely(!sock))
+		return -ENOTSOCK;
 
 	len = zc->len;
 	ret = io_zcrx_recv(req, zc->ifq, sock, 0, issue_flags, &zc->len);
@@ -1440,7 +1429,7 @@ static int io_sg_from_iter(struct sk_buff *skb,
 		return zerocopy_fill_skb_from_iter(skb, from, length);
 
 	bi.bi_size = min(from->count, length);
-	bi.bi_offset = from->iov_offset;
+	bi.bi_bvec_done = from->iov_offset;
 	bi.bi_idx = 0;
 
 	while (bi.bi_size && frag < MAX_SKB_FRAGS) {
@@ -1459,7 +1448,7 @@ static int io_sg_from_iter(struct sk_buff *skb,
 	from->bvec += bi.bi_idx;
 	from->nr_segs -= bi.bi_idx;
 	from->count -= copied;
-	from->iov_offset = bi.bi_offset;
+	from->iov_offset = bi.bi_bvec_done;
 
 	skb->data_len += copied;
 	skb->len += copied;
@@ -1687,46 +1676,6 @@ void io_socket_bpf_populate(struct io_uring_bpf_ctx *bctx, struct io_kiocb *req)
 	bctx->socket.protocol = sock->protocol;
 }
 
-void io_connect_bpf_populate(struct io_uring_bpf_ctx *bctx, struct io_kiocb *req)
-{
-	struct io_connect *conn = io_kiocb_to_cmd(req, struct io_connect);
-	struct sockaddr_storage *ss = req->async_data;
-
-	/*
-	 * move_addr_to_kernel() skips the copy for addr_len == 0, so
-	 * iomsg->addr may hold stale data from a prior CONNECT. Bail
-	 * unless addr_len covers the family discriminator.
-	 */
-	if (conn->addr_len < (int)sizeof(sa_family_t))
-		return;
-
-	bctx->connect.family = ss->ss_family;
-	switch (ss->ss_family) {
-	case AF_INET: {
-		struct sockaddr_in *sin = (struct sockaddr_in *)ss;
-
-		if (conn->addr_len < (int)sizeof(*sin))
-			break;
-		bctx->connect.port = sin->sin_port;
-		bctx->connect.v4_addr = sin->sin_addr.s_addr;
-		break;
-	}
-	case AF_INET6: {
-		struct sockaddr_in6 *sin6 = (struct sockaddr_in6 *)ss;
-
-		if (conn->addr_len < (int)sizeof(*sin6))
-			break;
-		bctx->connect.port = sin6->sin6_port;
-		memcpy(bctx->connect.v6_addr, &sin6->sin6_addr,
-		       sizeof(bctx->connect.v6_addr));
-		break;
-	}
-	default:
-		/* family is set; per-family fields stay zero - family-only filtering */
-		break;
-	}
-}
-
 int io_socket_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 {
 	struct io_socket *sock = io_kiocb_to_cmd(req, struct io_socket);
@@ -1883,6 +1832,7 @@ int io_bind_prep(struct io_kiocb *req, const struct io_uring_sqe *sqe)
 	addr = io_uring_alloc_async_data(NULL, req);
 	if (unlikely(!addr))
 		return -ENOMEM;
+
 	ret = move_addr_to_kernel(uaddr, bind->addr_len, addr);
 	if (unlikely(ret))
 		return ret;

@@ -33,7 +33,6 @@
 #include <drm/display/drm_scdc_helper.h>
 #include <drm/drm_print.h>
 #include <drm/drm_privacy_screen_consumer.h>
-#include <drm/intel/step.h>
 
 #include "icl_dsi.h"
 #include "intel_alpm.h"
@@ -82,6 +81,7 @@
 #include "intel_psr.h"
 #include "intel_quirks.h"
 #include "intel_snps_phy.h"
+#include "intel_step.h"
 #include "intel_tc.h"
 #include "intel_vdsc.h"
 #include "intel_vdsc_regs.h"
@@ -140,7 +140,7 @@ void hsw_prepare_dp_ddi_buffers(struct intel_encoder *encoder,
 	enum port port = encoder->port;
 	const struct intel_ddi_buf_trans *trans;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return;
 
@@ -172,7 +172,7 @@ static void hsw_prepare_hdmi_ddi_buffers(struct intel_encoder *encoder,
 	enum port port = encoder->port;
 	const struct intel_ddi_buf_trans *trans;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return;
 
@@ -188,7 +188,7 @@ static void hsw_prepare_hdmi_ddi_buffers(struct intel_encoder *encoder,
 		       trans->entries[level].hsw.trans2);
 }
 
-static intel_reg_t intel_ddi_buf_status_reg(struct intel_display *display, enum port port)
+static i915_reg_t intel_ddi_buf_status_reg(struct intel_display *display, enum port port)
 {
 	if (DISPLAY_VER(display) >= 14)
 		return XELPDP_PORT_BUF_CTL1(display, port);
@@ -469,10 +469,8 @@ void intel_ddi_set_dp_msa(const struct intel_crtc_state *crtc_state,
 	 * of Color Encoding Format and Content Color Gamut] while sending
 	 * YCBCR 420, HDR BT.2020 signals we should program MSA MISC1 fields
 	 * which indicate VSC SDP for the Pixel Encoding/Colorimetry Format.
-	 * Only set the delegation bit when the content needs it and
-	 * the sink advertises support.
 	 */
-	if (intel_dp_needs_vsc_colorimetry(crtc_state, conn_state))
+	if (intel_dp_needs_vsc_sdp(crtc_state, conn_state))
 		temp |= DP_MSA_MISC_COLOR_VSC_SDP;
 
 	intel_de_write(display, TRANS_MSA_MISC(display, cpu_transcoder),
@@ -1108,7 +1106,7 @@ static void skl_ddi_set_iboost(struct intel_encoder *encoder,
 		const struct intel_ddi_buf_trans *trans;
 		int n_entries;
 
-		trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+		trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 		if (drm_WARN_ON_ONCE(display->drm, !trans))
 			return;
 
@@ -1134,7 +1132,7 @@ static u8 intel_ddi_dp_voltage_max(struct intel_dp *intel_dp,
 	struct intel_encoder *encoder = &dp_to_dig_port(intel_dp)->base;
 	int n_entries;
 
-	intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 
 	if (drm_WARN_ON(display->drm, n_entries < 1))
 		n_entries = 1;
@@ -1177,7 +1175,7 @@ static void icl_ddi_combo_vswing_program(struct intel_encoder *encoder,
 	int n_entries, ln;
 	u32 val;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return;
 
@@ -1295,7 +1293,7 @@ static void icl_mg_phy_set_signal_levels(struct intel_encoder *encoder,
 	if (intel_tc_port_in_tbt_alt_mode(enc_to_dig_port(encoder)))
 		return;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return;
 
@@ -1396,7 +1394,7 @@ static void tgl_dkl_phy_set_signal_levels(struct intel_encoder *encoder,
 	if (intel_tc_port_in_tbt_alt_mode(enc_to_dig_port(encoder)))
 		return;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return;
 
@@ -1513,7 +1511,7 @@ int intel_ddi_level(struct intel_encoder *encoder,
 	const struct intel_ddi_buf_trans *trans;
 	int level, n_entries;
 
-	trans = intel_ddi_buf_trans_get(encoder, crtc_state, &n_entries);
+	trans = encoder->get_buf_trans(encoder, crtc_state, &n_entries);
 	if (drm_WARN_ON_ONCE(display->drm, !trans))
 		return 0;
 
@@ -1558,7 +1556,7 @@ hsw_set_signal_levels(struct intel_encoder *encoder,
 	intel_de_posting_read(display, DDI_BUF_CTL(port));
 }
 
-static void _icl_ddi_enable_clock(struct intel_display *display, intel_reg_t reg,
+static void _icl_ddi_enable_clock(struct intel_display *display, i915_reg_t reg,
 				  u32 clk_sel_mask, u32 clk_sel, u32 clk_off)
 {
 	mutex_lock(&display->dpll.lock);
@@ -1574,7 +1572,7 @@ static void _icl_ddi_enable_clock(struct intel_display *display, intel_reg_t reg
 	mutex_unlock(&display->dpll.lock);
 }
 
-static void _icl_ddi_disable_clock(struct intel_display *display, intel_reg_t reg,
+static void _icl_ddi_disable_clock(struct intel_display *display, i915_reg_t reg,
 				   u32 clk_off)
 {
 	mutex_lock(&display->dpll.lock);
@@ -1584,14 +1582,14 @@ static void _icl_ddi_disable_clock(struct intel_display *display, intel_reg_t re
 	mutex_unlock(&display->dpll.lock);
 }
 
-static bool _icl_ddi_is_clock_enabled(struct intel_display *display, intel_reg_t reg,
+static bool _icl_ddi_is_clock_enabled(struct intel_display *display, i915_reg_t reg,
 				      u32 clk_off)
 {
 	return !(intel_de_read(display, reg) & clk_off);
 }
 
 static struct intel_dpll *
-_icl_ddi_get_pll(struct intel_display *display, intel_reg_t reg,
+_icl_ddi_get_pll(struct intel_display *display, i915_reg_t reg,
 		 u32 clk_sel_mask, u32 clk_sel_shift)
 {
 	enum intel_dpll_id id;
@@ -2272,8 +2270,8 @@ tgl_dp_tp_transcoder(const struct intel_crtc_state *crtc_state)
 		return crtc_state->cpu_transcoder;
 }
 
-intel_reg_t dp_tp_ctl_reg(struct intel_encoder *encoder,
-			  const struct intel_crtc_state *crtc_state)
+i915_reg_t dp_tp_ctl_reg(struct intel_encoder *encoder,
+			 const struct intel_crtc_state *crtc_state)
 {
 	struct intel_display *display = to_intel_display(encoder);
 
@@ -2284,8 +2282,8 @@ intel_reg_t dp_tp_ctl_reg(struct intel_encoder *encoder,
 		return DP_TP_CTL(encoder->port);
 }
 
-static intel_reg_t dp_tp_status_reg(struct intel_encoder *encoder,
-				    const struct intel_crtc_state *crtc_state)
+static i915_reg_t dp_tp_status_reg(struct intel_encoder *encoder,
+				   const struct intel_crtc_state *crtc_state)
 {
 	struct intel_display *display = to_intel_display(encoder);
 
@@ -2561,7 +2559,7 @@ mtl_ddi_enable_d2d(struct intel_encoder *encoder)
 {
 	struct intel_display *display = to_intel_display(encoder);
 	enum port port = encoder->port;
-	intel_reg_t reg;
+	i915_reg_t reg;
 	u32 set_bits, wait_bits;
 	int ret;
 
@@ -3058,7 +3056,7 @@ mtl_ddi_disable_d2d(struct intel_encoder *encoder)
 {
 	struct intel_display *display = to_intel_display(encoder);
 	enum port port = encoder->port;
-	intel_reg_t reg;
+	i915_reg_t reg;
 	u32 clr_bits, wait_bits;
 	int ret;
 
@@ -3229,8 +3227,9 @@ static void intel_ddi_post_disable_hdmi_or_sst(struct intel_atomic_state *state,
 	struct intel_dp *intel_dp = enc_to_intel_dp(encoder);
 	struct intel_crtc *pipe_crtc;
 	bool is_hdmi = intel_crtc_has_type(old_crtc_state, INTEL_OUTPUT_HDMI);
+	int i;
 
-	for_each_pipe_crtc_modeset_disable(display, pipe_crtc, old_crtc_state) {
+	for_each_pipe_crtc_modeset_disable(display, pipe_crtc, old_crtc_state, i) {
 		const struct intel_crtc_state *old_pipe_crtc_state =
 			intel_atomic_get_old_crtc_state(state, pipe_crtc);
 
@@ -3257,7 +3256,7 @@ static void intel_ddi_post_disable_hdmi_or_sst(struct intel_atomic_state *state,
 
 	intel_ddi_disable_transcoder_func(old_crtc_state);
 
-	for_each_pipe_crtc_modeset_disable(display, pipe_crtc, old_crtc_state) {
+	for_each_pipe_crtc_modeset_disable(display, pipe_crtc, old_crtc_state, i) {
 		const struct intel_crtc_state *old_pipe_crtc_state =
 			intel_atomic_get_old_crtc_state(state, pipe_crtc);
 
@@ -3384,7 +3383,7 @@ static void intel_ddi_enable_dp(struct intel_atomic_state *state,
 	trans_port_sync_stop_link_train(state, encoder, crtc_state);
 }
 
-static intel_reg_t
+static i915_reg_t
 gen9_chicken_trans_reg_by_port(struct intel_display *display, enum port port)
 {
 	static const enum transcoder trans[] = {
@@ -3437,7 +3436,7 @@ static void intel_ddi_enable_hdmi(struct intel_atomic_state *state,
 		 * the bits affect a specific DDI port rather than
 		 * a specific transcoder.
 		 */
-		intel_reg_t reg = gen9_chicken_trans_reg_by_port(display, port);
+		i915_reg_t reg = gen9_chicken_trans_reg_by_port(display, port);
 		u32 val;
 
 		val = intel_de_read(display, reg);
@@ -3503,8 +3502,6 @@ static void intel_ddi_enable_hdmi(struct intel_atomic_state *state,
 	}
 
 	intel_ddi_buf_enable(encoder, buf_ctl);
-
-	intel_hdmi_poll_for_scrambling_enable(crtc_state, connector);
 }
 
 static void intel_ddi_enable(struct intel_atomic_state *state,
@@ -3516,6 +3513,7 @@ static void intel_ddi_enable(struct intel_atomic_state *state,
 	struct intel_crtc *pipe_crtc;
 	enum transcoder cpu_transcoder = crtc_state->cpu_transcoder;
 	bool is_hdmi = intel_crtc_has_type(crtc_state, INTEL_OUTPUT_HDMI);
+	int i;
 
 	/* 128b/132b SST */
 	if (!is_hdmi && intel_dp_is_uhbr(crtc_state)) {
@@ -3549,7 +3547,7 @@ static void intel_ddi_enable(struct intel_atomic_state *state,
 
 	intel_ddi_wait_for_fec_status(encoder, crtc_state, true);
 
-	for_each_pipe_crtc_modeset_enable(display, pipe_crtc, crtc_state) {
+	for_each_pipe_crtc_modeset_enable(display, pipe_crtc, crtc_state, i) {
 		const struct intel_crtc_state *pipe_crtc_state =
 			intel_atomic_get_new_crtc_state(state, pipe_crtc);
 
@@ -3671,7 +3669,7 @@ void intel_ddi_update_active_dpll(struct intel_atomic_state *state,
 	if (!intel_encoder_is_tc(encoder) || !display->dpll.mgr)
 		return;
 
-	for_each_intel_crtc_in_pipe_mask(display, pipe_crtc,
+	for_each_intel_crtc_in_pipe_mask(display->drm, pipe_crtc,
 					 intel_crtc_joined_pipe_mask(crtc_state))
 		intel_dpll_update_active(state, pipe_crtc, encoder);
 }
@@ -4487,8 +4485,7 @@ intel_ddi_compute_output_type(struct intel_encoder *encoder,
 	}
 }
 
-static int intel_ddi_compute_config(struct intel_atomic_state *state,
-				    struct intel_encoder *encoder,
+static int intel_ddi_compute_config(struct intel_encoder *encoder,
 				    struct intel_crtc_state *pipe_config,
 				    struct drm_connector_state *conn_state)
 {
@@ -4506,7 +4503,7 @@ static int intel_ddi_compute_config(struct intel_atomic_state *state,
 
 		ret = intel_hdmi_compute_config(encoder, pipe_config, conn_state);
 	} else {
-		ret = intel_dp_compute_config(state, encoder, pipe_config, conn_state);
+		ret = intel_dp_compute_config(encoder, pipe_config, conn_state);
 	}
 
 	if (ret)
@@ -4565,7 +4562,7 @@ static bool crtcs_port_sync_compatible(const struct intel_crtc_state *crtc_state
 		m_n_equal(&crtc_state1->dp_m_n, &crtc_state2->dp_m_n);
 }
 
-static u16
+static u8
 intel_ddi_port_sync_transcoders(const struct intel_crtc_state *ref_crtc_state,
 				int tile_group_id)
 {
@@ -4574,7 +4571,7 @@ intel_ddi_port_sync_transcoders(const struct intel_crtc_state *ref_crtc_state,
 	const struct drm_connector_state *conn_state;
 	struct intel_atomic_state *state =
 		to_intel_atomic_state(ref_crtc_state->uapi.state);
-	u16 transcoders = 0;
+	u8 transcoders = 0;
 	int i;
 
 	/*
@@ -4611,14 +4608,13 @@ intel_ddi_port_sync_transcoders(const struct intel_crtc_state *ref_crtc_state,
 	return transcoders;
 }
 
-static int intel_ddi_compute_config_late(struct intel_atomic_state *state,
-					 struct intel_encoder *encoder,
+static int intel_ddi_compute_config_late(struct intel_encoder *encoder,
 					 struct intel_crtc_state *crtc_state,
 					 struct drm_connector_state *conn_state)
 {
 	struct intel_display *display = to_intel_display(encoder);
 	struct drm_connector *connector = conn_state->connector;
-	u16 port_sync_transcoders = 0;
+	u8 port_sync_transcoders = 0;
 	int ret = 0;
 
 	if (intel_crtc_has_dp_encoder(crtc_state))
@@ -4665,7 +4661,6 @@ static void intel_ddi_encoder_destroy(struct drm_encoder *encoder)
 
 	drm_encoder_cleanup(encoder);
 	kfree(dig_port->hdcp.port_data.streams);
-	intel_dp_link_cleanup(&dig_port->dp);
 	kfree(dig_port);
 }
 
@@ -4703,15 +4698,10 @@ static int intel_ddi_init_dp_connector(struct intel_digital_port *dig_port)
 	struct intel_display *display = to_intel_display(dig_port);
 	struct intel_connector *connector;
 	enum port port = dig_port->base.port;
-	int err;
 
 	connector = intel_connector_alloc();
 	if (!connector)
 		return -ENOMEM;
-
-	err = intel_dp_link_init(&dig_port->dp);
-	if (err)
-		goto err_dp_init;
 
 	dig_port->dp.output_reg = DDI_BUF_CTL(port);
 	if (DISPLAY_VER(display) >= 14)
@@ -4725,9 +4715,8 @@ static int intel_ddi_init_dp_connector(struct intel_digital_port *dig_port)
 	dig_port->dp.preemph_max = intel_ddi_dp_preemph_max;
 
 	if (!intel_dp_init_connector(dig_port, connector)) {
-		err = -EINVAL;
-
-		goto err_init_connector;
+		kfree(connector);
+		return -EINVAL;
 	}
 
 	if (dig_port->base.type == INTEL_OUTPUT_EDP) {
@@ -4743,23 +4732,6 @@ static int intel_ddi_init_dp_connector(struct intel_digital_port *dig_port)
 	}
 
 	return 0;
-
-err_init_connector:
-	intel_dp_link_cleanup(&dig_port->dp);
-err_dp_init:
-	kfree(connector);
-
-	return err;
-}
-
-static void intel_ddi_cleanup_dp_connector(struct intel_digital_port *dig_port)
-{
-	struct intel_dp *intel_dp = &dig_port->dp;
-	struct intel_connector *connector = intel_dp->attached_connector;
-
-	intel_dp_cleanup_connector(dig_port, connector);
-	intel_dp_link_cleanup(intel_dp);
-	kfree(connector);
 }
 
 static int intel_hdmi_reset_link(struct intel_encoder *encoder,
@@ -4958,6 +4930,9 @@ static bool intel_ddi_a_force_4_lanes(struct intel_digital_port *dig_port)
 
 	if (dig_port->ddi_a_4_lanes)
 		return false;
+
+	if (intel_has_quirk(display, QUIRK_DDI_A_FORCE_4_LANES))
+		return true;
 
 	/* Broxton/Geminilake: Bspec says that DDI_A_4_LANES is the only
 	 *                     supported configuration
@@ -5444,7 +5419,7 @@ void intel_ddi_init(struct intel_display *display,
 	if (need_aux_ch(encoder, init_dp)) {
 		dig_port->aux_ch = intel_dp_aux_ch(encoder);
 		if (dig_port->aux_ch == AUX_CH_NONE)
-			goto err_aux_ch_init;
+			goto err;
 	}
 
 	/*
@@ -5480,7 +5455,7 @@ void intel_ddi_init(struct intel_display *display,
 		dig_port->unlock = intel_tc_port_unlock;
 
 		if (intel_tc_port_init(dig_port, is_legacy) < 0)
-			goto err_aux_ch_init;
+			goto err;
 	}
 
 	drm_WARN_ON(display->drm, port > PORT_I);
@@ -5511,7 +5486,7 @@ void intel_ddi_init(struct intel_display *display,
 
 	if (init_dp) {
 		if (intel_ddi_init_dp_connector(dig_port))
-			goto err_dp_connector_init;
+			goto err;
 
 		dig_port->hpd_pulse = intel_dp_hpd_pulse;
 
@@ -5525,18 +5500,12 @@ void intel_ddi_init(struct intel_display *display,
 	 */
 	if (encoder->type != INTEL_OUTPUT_EDP && init_hdmi) {
 		if (intel_ddi_init_hdmi_connector(dig_port))
-			goto err_hdmi_connector_init;
+			goto err;
 	}
 
 	return;
 
-err_hdmi_connector_init:
-	if (init_dp)
-		intel_ddi_cleanup_dp_connector(dig_port);
-err_dp_connector_init:
-	if (intel_encoder_is_tc(encoder))
-		intel_tc_port_cleanup(dig_port);
-err_aux_ch_init:
+err:
 	drm_encoder_cleanup(&encoder->base);
 	kfree(dig_port);
 }

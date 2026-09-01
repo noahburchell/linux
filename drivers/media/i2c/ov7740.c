@@ -1116,14 +1116,18 @@ static void ov7740_remove(struct i2c_client *client)
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 	struct ov7740 *ov7740 = container_of(sd, struct ov7740, subdev);
 
-	v4l2_async_unregister_subdev(sd);
+	mutex_destroy(&ov7740->mutex);
+	v4l2_ctrl_handler_free(ov7740->subdev.ctrl_handler);
 	media_entity_cleanup(&ov7740->subdev.entity);
+	v4l2_async_unregister_subdev(sd);
 	ov7740_free_controls(ov7740);
 
+	pm_runtime_get_sync(&client->dev);
 	pm_runtime_disable(&client->dev);
-	if (!pm_runtime_status_suspended(&client->dev))
-		ov7740_set_power(ov7740, 0);
 	pm_runtime_set_suspended(&client->dev);
+	pm_runtime_put_noidle(&client->dev);
+
+	ov7740_set_power(ov7740, 0);
 }
 
 static int __maybe_unused ov7740_runtime_suspend(struct device *dev)
@@ -1145,7 +1149,7 @@ static int __maybe_unused ov7740_runtime_resume(struct device *dev)
 }
 
 static const struct i2c_device_id ov7740_id[] = {
-	{ .name = "ov7740" },
+	{ "ov7740" },
 	{ /* sentinel */ }
 };
 MODULE_DEVICE_TABLE(i2c, ov7740_id);

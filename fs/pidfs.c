@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/anon_inodes.h>
-#include <linux/compat.h>
 #include <linux/exportfs.h>
 #include <linux/file.h>
 #include <linux/fs.h>
@@ -336,14 +335,14 @@ static inline bool pid_in_current_pidns(const struct pid *pid)
 	return false;
 }
 
-static __u32 pidfs_coredump_mask(enum task_dumpable dumpable)
+static __u32 pidfs_coredump_mask(unsigned long mm_flags)
 {
-	switch (dumpable) {
-	case TASK_DUMPABLE_OWNER:
+	switch (__get_dumpable(mm_flags)) {
+	case SUID_DUMP_USER:
 		return PIDFD_COREDUMP_USER;
-	case TASK_DUMPABLE_ROOT:
+	case SUID_DUMP_ROOT:
 		return PIDFD_COREDUMP_ROOT;
-	case TASK_DUMPABLE_OFF:
+	case SUID_DUMP_DISABLE:
 		return PIDFD_COREDUMP_SKIP;
 	default:
 		WARN_ON_ONCE(true);
@@ -431,9 +430,14 @@ static long pidfd_info(struct file *file, unsigned int cmd, unsigned long arg)
 		return -ESRCH;
 
 	if ((mask & PIDFD_INFO_COREDUMP) && !kinfo.coredump_mask) {
-		kinfo.coredump_mask = pidfs_coredump_mask(task_exec_state_get_dumpable(task));
-		kinfo.mask |= PIDFD_INFO_COREDUMP;
-		/* No coredump actually took place, so no coredump signal. */
+		guard(task_lock)(task);
+		if (task->mm) {
+			unsigned long flags = __mm_flags_get_dumpable(task->mm);
+
+			kinfo.coredump_mask = pidfs_coredump_mask(flags);
+			kinfo.mask |= PIDFD_INFO_COREDUMP;
+			/* No coredump actually took place, so no coredump signal. */
+		}
 	}
 
 	/* Unconditionally return identifiers and credentials, the rest only on request */
@@ -532,7 +536,6 @@ static long pidfd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	struct task_struct *task __free(put_task) = NULL;
 	struct nsproxy *nsp __free(put_nsproxy) = NULL;
 	struct ns_common *ns_common = NULL;
-	int error;
 
 	if (!pidfs_ioctl_valid(cmd))
 		return -ENOIOCTLCMD;
@@ -556,33 +559,20 @@ static long pidfd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	if (arg)
 		return -EINVAL;
 
-	/*
-	 * We're trying to open a file descriptor to the namespace so perform a
-	 * filesystem cred ptrace check. Hold @task's exec_update_lock for the
-	 * duration of the ptrace check and the namespace lookup so that the
-	 * credentials used for the access decision match those of @task at the
-	 * time its namespace is read, preventing a concurrent execve() from
-	 * swapping the task's credentials in between the check and the use. We
-	 * mirror nsfs behavior.
-	 */
-	error = down_read_killable(&task->signal->exec_update_lock);
-	if (error)
-		return error;
-
-	if (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS)) {
-		error = -EACCES;
-		goto out_unlock;
-	}
-
 	scoped_guard(task_lock, task) {
 		nsp = task->nsproxy;
 		if (nsp)
 			get_nsproxy(nsp);
 	}
-	if (!nsp) {
-		error = -ESRCH; /* just pretend it didn't exist */
-		goto out_unlock;
-	}
+	if (!nsp)
+		return -ESRCH; /* just pretend it didn't exist */
+
+	/*
+	 * We're trying to open a file descriptor to the namespace so perform a
+	 * filesystem cred ptrace check. Also, we mirror nsfs behavior.
+	 */
+	if (!ptrace_may_access(task, PTRACE_MODE_READ_FSCREDS))
+		return -EACCES;
 
 	switch (cmd) {
 	/* Namespaces that hang of nsproxy. */
@@ -664,31 +654,15 @@ static long pidfd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 #endif
 		break;
 	default:
-		error = -ENOIOCTLCMD;
+		return -ENOIOCTLCMD;
 	}
 
-	if (!error && !ns_common)
-		error = -EOPNOTSUPP;
-
-out_unlock:
-	up_read(&task->signal->exec_update_lock);
-	if (error)
-		return error;
+	if (!ns_common)
+		return -EOPNOTSUPP;
 
 	/* open_namespace() unconditionally consumes the reference */
 	return open_namespace(ns_common);
 }
-
-#ifdef CONFIG_COMPAT
-static long pidfd_compat_ioctl(struct file *file, unsigned int cmd,
-			       unsigned long arg)
-{
-	if (cmd == FS_IOC32_GETVERSION)
-		cmd = FS_IOC_GETVERSION;
-
-	return pidfd_ioctl(file, cmd, (unsigned long)compat_ptr(arg));
-}
-#endif
 
 static int pidfs_file_release(struct inode *inode, struct file *file)
 {
@@ -717,9 +691,7 @@ static const struct file_operations pidfs_file_operations = {
 	.show_fdinfo	= pidfd_show_fdinfo,
 #endif
 	.unlocked_ioctl	= pidfd_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= pidfd_compat_ioctl,
-#endif
+	.compat_ioctl   = compat_ptr_ioctl,
 };
 
 struct pid *pidfd_pid(const struct file *file)
@@ -804,7 +776,7 @@ void pidfs_coredump(const struct coredump_params *cprm)
 	VFS_WARN_ON_ONCE(attr == PIDFS_PID_DEAD);
 
 	/* Note how we were coredumped and that we coredumped. */
-	attr->coredump_mask = pidfs_coredump_mask(cprm->dumpable) |
+	attr->coredump_mask = pidfs_coredump_mask(cprm->mm_flags) |
 			      PIDFD_COREDUMPED;
 	/* If coredumping is set to skip we should never end up here. */
 	VFS_WARN_ON_ONCE(attr->coredump_mask & PIDFD_COREDUMP_SKIP);
@@ -948,20 +920,6 @@ static struct dentry *pidfs_fh_to_dentry(struct super_block *sb,
 	return path.dentry;
 }
 
-static struct file *pidfs_dentry_open(const struct path *path,
-				      unsigned int flags,
-				      const struct cred *cred)
-{
-	struct file *file;
-
-	/* pidfds are always O_RDWR. */
-	file = dentry_open(path, flags | O_RDWR, cred);
-	/* do_dentry_open() strips O_EXCL and O_TRUNC. */
-	if (!IS_ERR(file))
-		file->f_flags |= flags & (PIDFD_THREAD | PIDFD_AUTOKILL);
-	return file;
-}
-
 /*
  * Make sure that we reject any nonsensical flags that users pass via
  * open_by_handle_at(). Note that PIDFD_THREAD is defined as O_EXCL, and
@@ -987,13 +945,11 @@ static int pidfs_export_permission(struct handle_to_path_ctx *ctx,
 static struct file *pidfs_export_open(const struct path *path, unsigned int oflags)
 {
 	/*
-	 * Opening via file handle may never raise PIDFD_AUTOKILL. That can
-	 * only be done at task creation!
+	 * Clear O_LARGEFILE as open_by_handle_at() forces it and raise
+	 * O_RDWR as pidfds always are.
 	 */
-	if (WARN_ON_ONCE(oflags & PIDFD_AUTOKILL))
-		return ERR_PTR(-EINVAL);
-	/* Clear O_LARGEFILE as open_by_handle_at() forces it. */
-	return pidfs_dentry_open(path, oflags & ~O_LARGEFILE, current_cred());
+	oflags &= ~O_LARGEFILE;
+	return dentry_open(path, oflags | O_RDWR, current_cred());
 }
 
 static const struct export_operations pidfs_export_operations = {
@@ -1026,16 +982,14 @@ static void pidfs_put_data(void *data)
 }
 
 /**
- * pidfs_register_pid_gfp - register a struct pid in pidfs with custom GFP
- * flags
+ * pidfs_register_pid - register a struct pid in pidfs
  * @pid: pid to pin
- * @gfp: GFP flags for memory allocation
  *
- * Register a struct pid in pidfs with custom GFP flags.
+ * Register a struct pid in pidfs.
  *
  * Return: On success zero, on error a negative error code is returned.
  */
-int pidfs_register_pid_gfp(struct pid *pid, gfp_t gfp)
+int pidfs_register_pid(struct pid *pid)
 {
 	struct pidfs_attr *new_attr __free(kfree) = NULL;
 	struct pidfs_attr *attr;
@@ -1051,7 +1005,7 @@ int pidfs_register_pid_gfp(struct pid *pid, gfp_t gfp)
 	if (attr)
 		return 0;
 
-	new_attr = kmem_cache_zalloc(pidfs_attr_cachep, gfp);
+	new_attr = kmem_cache_zalloc(pidfs_attr_cachep, GFP_KERNEL);
 	if (!new_attr)
 		return -ENOMEM;
 
@@ -1140,6 +1094,8 @@ static int pidfs_init_fs_context(struct fs_context *fc)
 	if (!ctx)
 		return -ENOMEM;
 
+	fc->s_iflags |= SB_I_NOEXEC;
+	fc->s_iflags |= SB_I_NODEV;
 	ctx->s_d_flags |= DCACHE_DONTCACHE;
 	ctx->ops = &pidfs_sops;
 	ctx->eops = &pidfs_export_operations;
@@ -1157,6 +1113,7 @@ static struct file_system_type pidfs_type = {
 
 struct file *pidfs_alloc_file(struct pid *pid, unsigned int flags)
 {
+	struct file *pidfd_file;
 	struct path path __free(path_put) = {};
 	int ret;
 
@@ -1174,7 +1131,16 @@ struct file *pidfs_alloc_file(struct pid *pid, unsigned int flags)
 	VFS_WARN_ON_ONCE(!pid->attr);
 
 	flags &= ~PIDFD_STALE;
-	return pidfs_dentry_open(&path, flags, current_cred());
+	flags |= O_RDWR;
+	pidfd_file = dentry_open(&path, flags, current_cred());
+	/*
+	 * Raise PIDFD_THREAD and PIDFD_AUTOKILL explicitly as
+	 * do_dentry_open() strips O_EXCL and O_TRUNC.
+	 */
+	if (!IS_ERR(pidfd_file))
+		pidfd_file->f_flags |= (flags & (PIDFD_THREAD | PIDFD_AUTOKILL));
+
+	return pidfd_file;
 }
 
 void __init pidfs_init(void)

@@ -190,11 +190,11 @@ static int ipip_err(struct sk_buff *skb, u32 info)
 	if (t->parms.iph.ttl == 0 && type == ICMP_TIME_EXCEEDED)
 		goto out;
 
-	if (time_before(jiffies, READ_ONCE(t->err_time) + IPTUNNEL_ERR_TIMEO))
-		WRITE_ONCE(t->err_count, READ_ONCE(t->err_count) + 1);
+	if (time_before(jiffies, t->err_time + IPTUNNEL_ERR_TIMEO))
+		t->err_count++;
 	else
-		WRITE_ONCE(t->err_count, 1);
-	WRITE_ONCE(t->err_time, jiffies);
+		t->err_count = 1;
+	t->err_time = jiffies;
 
 out:
 	return err;
@@ -248,7 +248,7 @@ static int ipip_tunnel_rcv(struct sk_buff *skb, u8 ipproto)
 
 			tun_dst = ip_tun_rx_dst(skb, flags, 0, 0);
 			if (!tun_dst)
-				goto drop;
+				return 0;
 			ip_tunnel_md_udp_encap(skb, &tun_dst->u.tun_info);
 		}
 		skb_reset_mac_header(skb);
@@ -360,29 +360,19 @@ static int ipip_fill_forward_path(struct net_device_path_ctx *ctx,
 	const struct iphdr *tiph = &tunnel->parms.iph;
 	struct rtable *rt;
 
-	if (ctx->ether_type != cpu_to_be16(ETH_P_IP))
-		return -EOPNOTSUPP;
-
-	if (tunnel->collect_md)
-		return -EOPNOTSUPP;
-
-	if (tunnel->parms.iph.tos & 0x1)
-		return -EOPNOTSUPP;
-
-	rt = ip_route_output(dev_net(ctx->dev), tiph->daddr, tiph->saddr,
-			     inet_dsfield_to_dscp(tiph->tos),
-			     tunnel->parms.link, RT_SCOPE_UNIVERSE);
+	rt = ip_route_output(dev_net(ctx->dev), tiph->daddr, 0, 0, 0,
+			     RT_SCOPE_UNIVERSE);
 	if (IS_ERR(rt))
 		return PTR_ERR(rt);
 
 	path->type = DEV_PATH_TUN;
 	path->tun.src_v4.s_addr = tiph->saddr;
 	path->tun.dst_v4.s_addr = tiph->daddr;
-	path->tun.inner_proto = IPPROTO_IPIP;
-	path->tun.dst = &rt->dst;
+	path->tun.l3_proto = IPPROTO_IPIP;
 	path->dev = ctx->dev;
 
 	ctx->dev = rt->dst.dev;
+	ip_rt_put(rt);
 
 	return 0;
 }

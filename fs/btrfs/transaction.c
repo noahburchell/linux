@@ -394,7 +394,6 @@ loop:
 	cur_trans->transid = fs_info->generation;
 	fs_info->running_transaction = cur_trans;
 	cur_trans->aborted = 0;
-	trace_btrfs_transaction_start(cur_trans);
 	spin_unlock(&fs_info->trans_lock);
 
 	return 0;
@@ -631,7 +630,7 @@ start_transaction(struct btrfs_root *root, unsigned int num_items,
 	 * the appropriate flushing if need be.
 	 */
 	if (num_items && root != fs_info->chunk_root) {
-		qgroup_reserved = (num_items << fs_info->nodesize_bits);
+		qgroup_reserved = num_items * fs_info->nodesize;
 		/*
 		 * Use prealloc for now, as there might be a currently running
 		 * transaction that could free this reserved space prematurely
@@ -697,6 +696,8 @@ again:
 		ret = -ENOMEM;
 		goto alloc_fail;
 	}
+
+	xa_init(&h->writeback_inhibited_ebs);
 
 	/*
 	 * If we are JOIN_NOLOCK we're already committing a transaction and
@@ -1517,8 +1518,12 @@ static noinline int commit_fs_roots(struct btrfs_trans_handle *trans)
 			ASSERT(atomic_read(&root->log_writers) == 0,
 			       "atomic_read(&root->log_writers)=%d",
 			       atomic_read(&root->log_writers));
-			ASSERT(!root->log_commit[0]);
-			ASSERT(!root->log_commit[1]);
+			ASSERT(atomic_read(&root->log_commit[0]) == 0,
+			       "atomic_read(&root->log_commit[0])=%d",
+			       atomic_read(&root->log_commit[0]));
+			ASSERT(atomic_read(&root->log_commit[1]) == 0,
+			       "atomic_read(&root->log_commit[1])=%d",
+			       atomic_read(&root->log_commit[1]));
 
 			radix_tree_tag_clear(&fs_info->fs_roots_radix,
 					(unsigned long)btrfs_root_id(root),
@@ -1636,7 +1641,7 @@ static int qgroup_account_snapshot(struct btrfs_trans_handle *trans,
 	ret = btrfs_write_and_wait_transaction(trans);
 	if (unlikely(ret)) {
 		btrfs_err(fs_info,
-"error while writing out transaction during qgroup snapshot accounting: %pe", ERR_PTR(ret));
+"error while writing out transaction during qgroup snapshot accounting: %d", ret);
 		return ret;
 	}
 
@@ -2109,7 +2114,7 @@ static void cleanup_transaction(struct btrfs_trans_handle *trans, int err)
 	btrfs_put_transaction(cur_trans);
 	btrfs_put_transaction(cur_trans);
 
-	trace_btrfs_transaction_commit(trans);
+	trace_btrfs_transaction_commit(fs_info);
 
 	if (current->journal_info == trans)
 		current->journal_info = NULL;
@@ -2261,7 +2266,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	btrfs_create_pending_block_groups(trans);
 
 	if (!test_bit(BTRFS_TRANS_DIRTY_BG_RUN, &cur_trans->flags)) {
-		bool run_it = false;
+		int run_it = 0;
 
 		/* this mutex is also taken before trying to set
 		 * block groups readonly.  We need to make sure
@@ -2279,7 +2284,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 		mutex_lock(&fs_info->ro_block_group_mutex);
 		if (!test_and_set_bit(BTRFS_TRANS_DIRTY_BG_RUN,
 				      &cur_trans->flags))
-			run_it = true;
+			run_it = 1;
 		mutex_unlock(&fs_info->ro_block_group_mutex);
 
 		if (run_it) {
@@ -2315,7 +2320,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	}
 
 	cur_trans->state = TRANS_STATE_COMMIT_PREP;
-	trace_btrfs_transaction_commit(trans);
 	wake_up(&fs_info->transaction_blocked_wait);
 	btrfs_trans_state_lockdep_release(fs_info, BTRFS_LOCKDEP_TRANS_COMMIT_PREP);
 
@@ -2354,7 +2358,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	}
 
 	cur_trans->state = TRANS_STATE_COMMIT_START;
-	trace_btrfs_transaction_commit(trans);
 	wake_up(&fs_info->transaction_blocked_wait);
 	spin_unlock(&fs_info->trans_lock);
 
@@ -2410,7 +2413,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	spin_lock(&fs_info->trans_lock);
 	add_pending_snapshot(trans);
 	cur_trans->state = TRANS_STATE_COMMIT_DOING;
-	trace_btrfs_transaction_commit(trans);
 	spin_unlock(&fs_info->trans_lock);
 
 	/*
@@ -2559,7 +2561,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	spin_lock(&fs_info->trans_lock);
 	cur_trans->state = TRANS_STATE_UNBLOCKED;
-	trace_btrfs_transaction_commit(trans);
 	fs_info->running_transaction = NULL;
 	spin_unlock(&fs_info->trans_lock);
 	mutex_unlock(&fs_info->reloc_mutex);
@@ -2582,7 +2583,7 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	ret = btrfs_write_and_wait_transaction(trans);
 	if (unlikely(ret)) {
-		btrfs_err(fs_info, "error while writing out transaction: %pe", ERR_PTR(ret));
+		btrfs_err(fs_info, "error while writing out transaction: %d", ret);
 		mutex_unlock(&fs_info->tree_log_mutex);
 		goto scrub_continue;
 	}
@@ -2602,7 +2603,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	 * which can change it.
 	 */
 	cur_trans->state = TRANS_STATE_SUPER_COMMITTED;
-	trace_btrfs_transaction_commit(trans);
 	wake_up(&cur_trans->commit_wait);
 	btrfs_trans_state_lockdep_release(fs_info, BTRFS_LOCKDEP_TRANS_SUPER_COMMITTED);
 
@@ -2619,7 +2619,6 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 	 * which can change it.
 	 */
 	cur_trans->state = TRANS_STATE_COMPLETED;
-	trace_btrfs_transaction_commit(trans);
 	wake_up(&cur_trans->commit_wait);
 	btrfs_trans_state_lockdep_release(fs_info, BTRFS_LOCKDEP_TRANS_COMPLETED);
 
@@ -2632,6 +2631,8 @@ int btrfs_commit_transaction(struct btrfs_trans_handle *trans)
 
 	if (trans->type & __TRANS_FREEZABLE)
 		sb_end_intwrite(fs_info->sb);
+
+	trace_btrfs_transaction_commit(fs_info);
 
 	btrfs_scrub_continue(fs_info);
 
@@ -2721,33 +2722,17 @@ int btrfs_clean_one_deleted_snapshot(struct btrfs_fs_info *fs_info)
  *
  * We'll complete the cleanup in btrfs_end_transaction and
  * btrfs_commit_transaction.
- *
- * Note: the parameter @error encodes whether the transactin abort was first hit
- *       (setting the FS_ERROR state bit in btrfs_abort_transaction())
- *       - positive number - first hit
- *       - negative number - abort after it was already done
  */
 void __cold __btrfs_abort_transaction(struct btrfs_trans_handle *trans,
 				      const char *function,
-				      unsigned int line, int error)
+				      unsigned int line, int error, bool first_hit)
 {
 	struct btrfs_fs_info *fs_info = trans->fs_info;
-	bool first_hit = false;
-
-	if (error > 0) {
-		error = -error;
-		first_hit = true;
-	}
 
 	WRITE_ONCE(trans->aborted, error);
 	WRITE_ONCE(trans->transaction->aborted, error);
-	trace_btrfs_transaction_abort(trans);
-	if (first_hit) {
-		btrfs_err(fs_info, "Transaction %llu aborted (%pe)",
-			  trans->transid, ERR_PTR(error));
-		if (error == -ENOSPC)
-			btrfs_dump_space_info_for_trans_abort(fs_info);
-	}
+	if (first_hit && error == -ENOSPC)
+		btrfs_dump_space_info_for_trans_abort(fs_info);
 	/* Wake up anybody who may be waiting on this transaction */
 	wake_up(&fs_info->transaction_wait);
 	wake_up(&fs_info->transaction_blocked_wait);

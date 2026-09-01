@@ -1,8 +1,8 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 7
-PATCHLEVEL = 3
-SUBLEVEL = 0
-EXTRAVERSION = -rc1
+PATCHLEVEL = 1
+SUBLEVEL = 6
+EXTRAVERSION =
 NAME = Baby Opossum Posse
 
 # *DOCUMENTATION*
@@ -293,10 +293,8 @@ version_h := include/generated/uapi/linux/version.h
 clean-targets := %clean mrproper cleandocs
 no-dot-config-targets := $(clean-targets) \
 			 cscope gtags TAGS tags help% %docs check% coccicheck \
-			 kconfig-sym-check \
 			 $(version_h) headers headers_% archheaders archscripts \
 			 %asm-generic kernelversion %src-pkg dt_binding_check \
-			 dt_style_selftest \
 			 outputmakefile rustavailable rustfmt rustfmtcheck \
 			 run-command
 no-sync-config-targets := $(no-dot-config-targets) %install modules_sign kernelrelease \
@@ -533,9 +531,6 @@ OBJCOPY		= $(LLVM_PREFIX)llvm-objcopy$(LLVM_SUFFIX)
 OBJDUMP		= $(LLVM_PREFIX)llvm-objdump$(LLVM_SUFFIX)
 READELF		= $(LLVM_PREFIX)llvm-readelf$(LLVM_SUFFIX)
 STRIP		= $(LLVM_PREFIX)llvm-strip$(LLVM_SUFFIX)
-ifeq ($(filter -fuse-ld=% --ld-path=%,$(KBUILD_HOSTLDFLAGS)),)
-KBUILD_HOSTLDFLAGS += -fuse-ld=lld
-endif
 else
 CC		= $(CROSS_COMPILE)gcc
 LD		= $(CROSS_COMPILE)ld
@@ -700,11 +695,13 @@ filechk_makefile = { \
 	echo "include $(abs_srctree)/Makefile"; \
 	}
 
-PHONY += $(CURDIR)/Makefile
-$(CURDIR)/Makefile: FORCE
+$(objtree)/Makefile: FORCE
 	$(call filechk,makefile)
 
-outputmakefile: $(CURDIR)/Makefile
+# Prevent $(srcroot)/Makefile from inhibiting the rule to run.
+PHONY += $(objtree)/Makefile
+
+outputmakefile: $(objtree)/Makefile
 ifeq ($(KBUILD_EXTMOD),)
 	@if [ -f $(srctree)/.config -o \
 		 -d $(srctree)/include/config -o \
@@ -796,7 +793,7 @@ endif
 # in addition to whatever we do anyway.
 # Just "make" or "make all" shall build modules as well
 
-ifneq ($(filter all modules nsdeps compile_commands.json clang-% sbom,$(MAKECMDGOALS)),)
+ifneq ($(filter all modules nsdeps compile_commands.json clang-%,$(MAKECMDGOALS)),)
   KBUILD_MODULES := y
 endif
 
@@ -932,10 +929,19 @@ KBUILD_CFLAGS	+= -fno-delete-null-pointer-checks
 ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE
 KBUILD_CFLAGS += -O2
 KBUILD_RUSTFLAGS += -Copt-level=2
+else ifdef CONFIG_CC_OPTIMIZE_FOR_PERFORMANCE_O3
+KBUILD_CFLAGS += -O3
+KBUILD_RUSTFLAGS += -Copt-level=3
 else ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS += -Os
 KBUILD_RUSTFLAGS += -Copt-level=s
 endif
+
+# Perform swing modulo scheduling immediately before the first scheduling pass.
+# This pass looks at innermost loops and reorders their instructions by
+# overlapping different iterations.
+KBUILD_CFLAGS += $(call cc-option,-fmodulo-sched -fmodulo-sched-allow-regmoves -fivopts)
+KBUILD_CFLAGS += $(call cc-option,-mllvm -enable-pipeliner)
 
 # Always set `debug-assertions` and `overflow-checks` because their default
 # depends on `opt-level` and `debug-assertions`, respectively.
@@ -997,11 +1003,6 @@ CC_AUTO_VAR_INIT_ZERO_ENABLER := -enable-trivial-auto-var-init-zero-knowing-it-w
 export CC_AUTO_VAR_INIT_ZERO_ENABLER
 KBUILD_CFLAGS	+= $(CC_AUTO_VAR_INIT_ZERO_ENABLER)
 endif
-endif
-
-ifdef CONFIG_KMALLOC_PARTITION_TYPED
-# KMALLOC_PARTITION_CACHES_NR + 1
-KBUILD_CFLAGS	+= -falloc-token-max=16
 endif
 
 ifdef CONFIG_CC_IS_CLANG
@@ -1083,16 +1084,6 @@ endif
 export CC_FLAGS_SCS
 endif
 
-ifdef CONFIG_RUST_INLINE_HELPERS
-# `rustc` normally emits traps for unreachable paths during code generation.
-# With inline helpers, Clang performs code generation from the linked bitcode
-# instead, so request the same behavior explicitly. Otherwise `objtool` may
-# follow an impossible Rust path into the next function.
-CC_FLAGS_RUST_INLINE_HELPERS := -mllvm -trap-unreachable \
-				-mllvm -no-trap-after-noreturn
-export CC_FLAGS_RUST_INLINE_HELPERS
-endif
-
 ifdef CONFIG_LTO_CLANG
 ifdef CONFIG_LTO_CLANG_FULL
 CC_FLAGS_LTO	:= -flto
@@ -1128,8 +1119,7 @@ endif
 ifdef CONFIG_RUST
 	# Always pass -Zsanitizer-cfi-normalize-integers as CONFIG_RUST selects
 	# CONFIG_CFI_ICALL_NORMALIZE_INTEGERS.
-	# Disable function merging as LLVM incorrectly merges functions with different KCFI types.
-	RUSTC_FLAGS_CFI   := -Zsanitizer=kcfi -Zsanitizer-cfi-normalize-integers -Zmerge-functions=disabled
+	RUSTC_FLAGS_CFI   := -Zsanitizer=kcfi -Zsanitizer-cfi-normalize-integers
 	KBUILD_RUSTFLAGS += $(RUSTC_FLAGS_CFI)
 	export RUSTC_FLAGS_CFI
 endif
@@ -1235,12 +1225,6 @@ KBUILD_RUSTFLAGS += $(KRUSTFLAGS)
 
 KBUILD_LDFLAGS_MODULE += --build-id=sha1
 LDFLAGS_vmlinux += --build-id=sha1
-
-# Specific code, such as outlined KASAN checks, may be placed in
-# COMDAT-deduplicated sections. Use --force-group-allocation to resolve these
-# groups when linking modules. The option is available from ld.bfd 2.29 and
-# ld.lld 19.1.0.
-KBUILD_LDFLAGS_MODULE += $(call ld-option,--force-group-allocation)
 
 KBUILD_LDFLAGS	+= -z noexecstack
 ifeq ($(CONFIG_LD_IS_BFD),y)
@@ -1367,7 +1351,7 @@ PHONY += vmlinux_o
 vmlinux_o: vmlinux.a $(KBUILD_VMLINUX_LIBS)
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.vmlinux_o
 
-vmlinux.o: vmlinux_o
+vmlinux.o modules.builtin.modinfo modules.builtin: vmlinux_o
 	@:
 
 PHONY += vmlinux
@@ -1572,22 +1556,6 @@ prepare: tools/bpf/resolve_btfids
 endif
 endif
 
-# tools/bootconfig renders the embedded bootconfig into a cmdline at build time.
-ifdef CONFIG_CMDLINE_FROM_BOOTCONFIG
-prepare: tools/bootconfig
-endif
-
-# tools/bootconfig is run on the build host during prepare, so force a host
-# binary here; its own Makefile keeps $(CC) for standalone and cross builds.
-# CROSS_COMPILE= is cleared so tools/scripts/Makefile.include does not inject
-# the target's --target=/--sysroot= flags into the host clang invocation under
-# LLVM=1 cross builds (which would produce a target binary that fails to exec).
-tools/bootconfig: export CC := $(HOSTCC)
-tools/bootconfig: FORCE
-	$(Q)mkdir -p $(objtree)/tools
-	$(Q)$(MAKE) O=$(abspath $(objtree)) subdir=tools -C $(srctree)/tools/ \
-		bootconfig CROSS_COMPILE=
-
 # The tools build system is not a part of Kbuild and tends to introduce
 # its own unique issues. If you need to integrate a new tool into Kbuild,
 # please consider locating that tool outside the tools/ tree and using the
@@ -1614,15 +1582,6 @@ ifneq ($(wildcard $(objtool_O)),)
 	$(Q)$(MAKE) -sC $(abs_srctree)/tools/objtool O=$(objtool_O) srctree=$(abs_srctree) $(patsubst objtool_%,%,$@)
 endif
 
-PHONY += bootconfig_clean
-
-bootconfig_O = $(abspath $(objtree))/tools/bootconfig
-
-bootconfig_clean:
-ifneq ($(wildcard $(bootconfig_O)),)
-	$(Q)$(MAKE) -sC $(srctree)/tools/bootconfig O=$(bootconfig_O) clean
-endif
-
 tools/: FORCE
 	$(Q)mkdir -p $(objtree)/tools
 	$(Q)$(MAKE) O=$(abspath $(objtree)) subdir=tools -C $(srctree)/tools/
@@ -1636,10 +1595,10 @@ tools/%: FORCE
 
 PHONY += kselftest
 kselftest: headers
-	$(Q)unset sub_make_done; $(MAKE) -C $(srctree)/tools/testing/selftests run_tests
+	$(Q)$(MAKE) -C $(srctree)/tools/testing/selftests run_tests
 
 kselftest-%: headers FORCE
-	$(Q)unset sub_make_done; $(MAKE) -C $(srctree)/tools/testing/selftests $*
+	$(Q)$(MAKE) -C $(srctree)/tools/testing/selftests $*
 
 PHONY += kselftest-merge
 kselftest-merge:
@@ -1720,10 +1679,6 @@ PHONY += dt_compatible_check
 dt_compatible_check: dt_binding_schemas
 	$(Q)$(MAKE) $(build)=$(dtbindingtree) $@
 
-PHONY += dt_style_selftest
-dt_style_selftest:
-	$(Q)$(srctree)/scripts/dtc/dt-style-selftest/run.sh
-
 # ---------------------------------------------------------------------------
 # Modules
 
@@ -1772,7 +1727,7 @@ CLEAN_FILES += vmlinux.symvers modules-only.symvers \
 	       vmlinux.thinlto-index builtin.order \
 	       compile_commands.json rust/test \
 	       rust-project.json .vmlinux.objs .vmlinux.export.c \
-	       .builtin-dtbs-list .builtin-dtbs.S sbom-*.spdx.json
+               .builtin-dtbs-list .builtin-dtbs.S
 
 # Directories & files removed with 'make mrproper'
 MRPROPER_FILES += include/config include/generated          \
@@ -1785,8 +1740,7 @@ MRPROPER_FILES += include/config include/generated          \
 		  vmlinux-gdb.py \
 		  rpmbuild \
 		  rust/libmacros.so rust/libmacros.dylib \
-		  rust/libpin_init_internal.so rust/libpin_init_internal.dylib \
-		  rust/libzerocopy_derive.so rust/libzerocopy_derive.dylib
+		  rust/libpin_init_internal.so rust/libpin_init_internal.dylib
 
 # clean - Delete most, but leave enough to build external modules
 #
@@ -1798,7 +1752,7 @@ vmlinuxclean:
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/link-vmlinux.sh clean
 	$(Q)$(if $(ARCH_POSTLINK), $(MAKE) -f $(ARCH_POSTLINK) clean)
 
-clean: archclean vmlinuxclean resolve_btfids_clean objtool_clean bootconfig_clean
+clean: archclean vmlinuxclean resolve_btfids_clean objtool_clean
 
 # mrproper - Delete all generated files, including .config
 #
@@ -1881,19 +1835,17 @@ help:
 	 echo  '                    (default: $(INSTALL_HDR_PATH))'; \
 	 echo  ''
 	@echo  'Static analysers:'
-	@echo  '  checkstack        - Generate a list of stack hogs and consider all functions'
-	@echo  '                      with a stack size larger than MINSTACKSIZE (default: 100)'
-	@echo  '  versioncheck      - Sanity check on version.h usage'
-	@echo  '  includecheck      - Check for duplicate included header files'
-	@echo  '  headerdep         - Detect inclusion cycles in headers'
-	@echo  '  coccicheck        - Check with Coccinelle'
-	@echo  '  kconfig-sym-check - Check for dangling Kconfig symbol references'
-	@echo  '  clang-analyzer    - Check with clang static analyzer'
-	@echo  '  clang-tidy        - Check with clang-tidy'
+	@echo  '  checkstack      - Generate a list of stack hogs and consider all functions'
+	@echo  '                    with a stack size larger than MINSTACKSIZE (default: 100)'
+	@echo  '  versioncheck    - Sanity check on version.h usage'
+	@echo  '  includecheck    - Check for duplicate included header files'
+	@echo  '  headerdep       - Detect inclusion cycles in headers'
+	@echo  '  coccicheck      - Check with Coccinelle'
+	@echo  '  clang-analyzer  - Check with clang static analyzer'
+	@echo  '  clang-tidy      - Check with clang-tidy'
 	@echo  ''
 	@echo  'Tools:'
 	@echo  '  nsdeps          - Generate missing symbol namespace dependencies'
-	@echo  '  sbom            - Generate Software Bill of Materials'
 	@echo  ''
 	@echo  'Kernel selftest:'
 	@echo  '  kselftest         - Build and run kernel selftest'
@@ -1930,7 +1882,6 @@ help:
 		echo '  dtbs_install       - Install dtbs to $(INSTALL_DTBS_PATH)'; \
 		echo '  dt_binding_check   - Validate device tree binding documents and examples'; \
 		echo '  dt_binding_schemas - Build processed device tree binding schemas'; \
-		echo '  dt_style_selftest  - Run dt-check-style fixture tests'; \
 		echo '  dtbs_check         - Validate device tree source files';\
 		echo '')
 
@@ -2040,8 +1991,6 @@ rustfmt:
 			-path $(srctree)/rust/proc-macro2 \
 			-o -path $(srctree)/rust/quote \
 			-o -path $(srctree)/rust/syn \
-			-o -path $(srctree)/rust/zerocopy \
-			-o -path $(srctree)/rust/zerocopy-derive \
 		\) -prune -o \
 		-type f -a -name '*.rs' -a ! -name '*generated*' -print \
 		| xargs $(RUSTFMT) $(rustfmt_flags)
@@ -2250,7 +2199,6 @@ clean: $(clean-dirs)
 		-o -name '*.c.[012]*.*' \
 		-o -name '*.ll' \
 		-o -name '*.gcno' \
-		-o -name '*.long-type-*.txt' \
 		\) -type f -print \
 		-o -name '.tmp_*' -print \
 		| xargs rm -rf
@@ -2284,29 +2232,6 @@ nsdeps: export KBUILD_NSDEPS=1
 nsdeps: modules
 	$(Q)$(CONFIG_SHELL) $(srctree)/scripts/nsdeps
 
-# Script to generate .spdx.json SBOM documents describing the build
-# ---------------------------------------------------------------------------
-
-ifdef building_out_of_srctree
-sbom_targets := sbom-source.spdx.json
-endif
-sbom_targets += sbom-build.spdx.json sbom-output.spdx.json
-quiet_cmd_sbom = GEN     $(sbom_targets)
-      cmd_sbom = printf "%s\n" "$(KBUILD_IMAGE)" >"$(tmp-target)"; \
-                 $(if $(CONFIG_MODULES),sed 's/\.o$$/.ko/' $(objtree)/modules.order >> "$(tmp-target)";) \
-                 $(PYTHON3) $(srctree)/scripts/sbom/sbom.py \
-                     --src-tree $(abspath $(srctree)) \
-                     --obj-tree $(abspath $(objtree)) \
-                     --roots-file "$(tmp-target)" \
-                     --output-directory $(abspath $(objtree)) \
-                     --generate-spdx \
-                     --package-license "GPL-2.0 WITH Linux-syscall-note" \
-                     --package-version "$(KERNELVERSION)" \
-                     --write-output-on-error;
-PHONY += sbom
-sbom: $(notdir $(KBUILD_IMAGE)) include/generated/autoconf.h $(if $(CONFIG_MODULES),modules modules.order)
-	$(call cmd,sbom)
-
 # Clang Tooling
 # ---------------------------------------------------------------------------
 
@@ -2337,7 +2262,7 @@ endif
 # Scripts to check various things for consistency
 # ---------------------------------------------------------------------------
 
-PHONY += includecheck versioncheck coccicheck kconfig-sym-check
+PHONY += includecheck versioncheck coccicheck
 
 includecheck:
 	find $(srctree)/* $(RCS_FIND_IGNORE) \
@@ -2351,9 +2276,6 @@ versioncheck:
 
 coccicheck:
 	$(Q)$(BASH) $(srctree)/scripts/$@
-
-kconfig-sym-check:
-	$(Q)$(PERL) $(srctree)/scripts/kconfig/kconfig-sym-check.pl $(srctree) $(KCONFIG_SYM_CHECK_EXCLUDES)
 
 PHONY += checkstack kernelrelease kernelversion image_name
 

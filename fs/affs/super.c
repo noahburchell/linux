@@ -88,7 +88,7 @@ void affs_mark_sb_dirty(struct super_block *sb)
 	spin_lock(&sbi->work_lock);
 	if (!sbi->work_queued) {
 	       delay = msecs_to_jiffies(dirty_writeback_interval * 10);
-	       queue_delayed_work(system_dfl_long_wq, &sbi->sb_work, delay);
+	       queue_delayed_work(system_long_wq, &sbi->sb_work, delay);
 	       sbi->work_queued = 1;
 	}
 	spin_unlock(&sbi->work_lock);
@@ -108,6 +108,7 @@ static struct inode *affs_alloc_inode(struct super_block *sb)
 	i->i_lc = NULL;
 	i->i_ext_bh = NULL;
 	i->i_pa_cnt = 0;
+	mmb_init(&i->i_metadata_bhs, &i->vfs_inode.i_data);
 
 	return &i->vfs_inode;
 }
@@ -357,8 +358,7 @@ static int affs_fill_super(struct super_block *sb, struct fs_context *fc)
 	size = bdev_nr_sectors(sb->s_bdev);
 	pr_debug("initial blocksize=%d, #blocks=%d\n", 512, size);
 
-	if (!sb_set_blocksize(sb, PAGE_SIZE))
-		return -EINVAL;
+	affs_set_blocksize(sb, PAGE_SIZE);
 	/* Try to find root block. Its location depends on the block size. */
 
 	i = bdev_logical_block_size(sb->s_bdev);
@@ -374,8 +374,7 @@ static int affs_fill_super(struct super_block *sb, struct fs_context *fc)
 		if (ctx->root_block < 0)
 			sbi->s_root_block = (ctx->reserved + size - 1) / 2;
 		pr_debug("setting blocksize to %d\n", blocksize);
-		if (!sb_set_blocksize(sb, blocksize))
-			return -EINVAL;
+		affs_set_blocksize(sb, blocksize);
 		sbi->s_partition_size = size;
 
 		/* The root block location that was calculated above is not

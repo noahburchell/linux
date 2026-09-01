@@ -11,10 +11,12 @@
  * This component provides an interface to get DCN-specific bounding box values.
  */
 
-static void get_default_soc_bb(struct dml2_soc_bb *soc_bb)
+static void get_default_soc_bb(struct dml2_soc_bb *soc_bb, const struct dc *dc)
 {
-	memcpy(soc_bb, &dml2_socbb_dcn42, sizeof(struct dml2_soc_bb));
-	memcpy(&soc_bb->qos_parameters, &dml_dcn42_variant_a_soc_qos_params, sizeof(struct dml2_soc_qos_parameters));
+	{
+		memcpy(soc_bb, &dml2_socbb_dcn42, sizeof(struct dml2_soc_bb));
+		memcpy(&soc_bb->qos_parameters, &dml_dcn42_variant_a_soc_qos_params, sizeof(struct dml2_soc_qos_parameters));
+	}
 }
 
 /*
@@ -45,18 +47,18 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 	 * for use with dml we need to fill in using an active value aiming for >= 2x DCFCLK
 	 */
 	if (dc_clk_table->num_entries_per_clk.num_fclk_levels && dc_clk_table->num_entries_per_clk.num_dcfclk_levels) {
-		dml_clk_table->fclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_dcfclk_levels;
-		dml_clk_table->dcfclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_dcfclk_levels;
+		dml_clk_table->fclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_dcfclk_levels;
+		dml_clk_table->dcfclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_dcfclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
-			if (i < (int)dc_clk_table->num_entries_per_clk.num_dcfclk_levels) {
+			if (i < dc_clk_table->num_entries_per_clk.num_dcfclk_levels) {
 				int j, max_fclk = 0;
 
 				dml_clk_table->dcfclk.clk_values_khz[i] = dc_clk_table->entries[i].dcfclk_mhz * 1000;
 				for (j = 0; j < MAX_NUM_DPM_LVL; j++) {
-					if ((uint32_t)(dc_clk_table->entries[j].fclk_mhz * 1000) > (uint32_t)max_fclk)
+					if (dc_clk_table->entries[j].fclk_mhz * 1000 > max_fclk)
 						max_fclk = dc_clk_table->entries[j].fclk_mhz * 1000;
 					dml_clk_table->fclk.clk_values_khz[i] = max_fclk;
-						if ((uint32_t)max_fclk >= 2 * dml_clk_table->dcfclk.clk_values_khz[i])
+					if (max_fclk >= 2 * dml_clk_table->dcfclk.clk_values_khz[i])
 						break;
 				}
 			} else {
@@ -68,7 +70,7 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 
 	/* uclk */
 	if (dc_clk_table->num_entries_per_clk.num_memclk_levels) {
-		dml_clk_table->uclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_memclk_levels;
+		dml_clk_table->uclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_memclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
 			if (i < dml_clk_table->uclk.num_clk_values) {
 				dml_clk_table->uclk.clk_values_khz[i] = dc_clk_table->entries[i].memclk_mhz * 1000;
@@ -82,7 +84,7 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 
 	/* dispclk */
 	if (dc_clk_table->num_entries_per_clk.num_dispclk_levels) {
-		dml_clk_table->dispclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_dispclk_levels;
+		dml_clk_table->dispclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_dispclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
 			if (i < dml_clk_table->dispclk.num_clk_values) {
 				dml_clk_table->dispclk.clk_values_khz[i] = dc_clk_table->entries[i].dispclk_mhz * 1000;
@@ -99,7 +101,7 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 
 	/* dppclk */
 	if (dc_clk_table->num_entries_per_clk.num_dppclk_levels) {
-		dml_clk_table->dppclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_dppclk_levels;
+		dml_clk_table->dppclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_dppclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
 			if (i < dml_clk_table->dppclk.num_clk_values) {
 				dml_clk_table->dppclk.clk_values_khz[i] = dc_clk_table->entries[i].dppclk_mhz * 1000;
@@ -115,7 +117,7 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 
 	/* dtbclk */
 	if (dc_clk_table->num_entries_per_clk.num_dtbclk_levels) {
-		dml_clk_table->dtbclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_dtbclk_levels;
+		dml_clk_table->dtbclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_dtbclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
 			if (i < dml_clk_table->dtbclk.num_clk_values) {
 				dml_clk_table->dtbclk.clk_values_khz[i] = dc_clk_table->entries[i].dtbclk_mhz * 1000;
@@ -127,7 +129,7 @@ static void dcn42_convert_dc_clock_table_to_soc_bb_clock_table(
 
 	/* socclk */
 	if (dc_clk_table->num_entries_per_clk.num_socclk_levels) {
-		dml_clk_table->socclk.num_clk_values = (uint8_t)dc_clk_table->num_entries_per_clk.num_socclk_levels;
+		dml_clk_table->socclk.num_clk_values = dc_clk_table->num_entries_per_clk.num_socclk_levels;
 		for (i = 0; i < min(DML_MAX_CLK_TABLE_SIZE, MAX_NUM_DPM_LVL); i++) {
 			if (i < dml_clk_table->socclk.num_clk_values) {
 				dml_clk_table->socclk.clk_values_khz[i] = dc_clk_table->entries[i].socclk_mhz * 1000;
@@ -159,7 +161,7 @@ static void dcn42_update_soc_bb_with_values_from_clk_mgr(struct dml2_soc_bb *soc
 	}
 }
 
-void dcn42_apply_soc_bb_updates(struct dml2_soc_bb *soc_bb, const struct dc *dc, const struct dml2_configuration_options *config)
+static void apply_soc_bb_updates(struct dml2_soc_bb *soc_bb, const struct dc *dc, const struct dml2_configuration_options *config)
 {
 	(void)config;
 	/* Individual modification can be overwritten even if it was obtained by a previous function.
@@ -175,9 +177,9 @@ void dcn42_apply_soc_bb_updates(struct dml2_soc_bb *soc_bb, const struct dc *dc,
 void dcn42_get_soc_bb(struct dml2_soc_bb *soc_bb, const struct dc *dc, const struct dml2_configuration_options *config)
 {
 	//get default soc_bb with static values
-	get_default_soc_bb(soc_bb);
+	get_default_soc_bb(soc_bb, dc);
 	//update soc_bb values with more accurate values
-	dcn42_apply_soc_bb_updates(soc_bb, dc, config);
+	apply_soc_bb_updates(soc_bb, dc, config);
 }
 
 static void dcn42_get_ip_caps(struct dml2_ip_capabilities *ip_caps)

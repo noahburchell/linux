@@ -194,7 +194,7 @@ void note_page(struct ptdump_state *pt_st, unsigned long addr, int level,
 	struct ptdump_pg_state *st = container_of(pt_st, struct ptdump_pg_state, ptdump);
 	struct ptdump_pg_level *pg_level = st->pg_level;
 	static const char units[] = "KMGTPE";
-	ptval_t prot = 0;
+	ptdesc_t prot = 0;
 
 	/* check if the current level has been folded dynamically */
 	if (st->mm && ((level == 1 && mm_p4d_folded(st->mm)) ||
@@ -278,19 +278,16 @@ void note_page_pgd(struct ptdump_state *pt_st, unsigned long addr, pgd_t pgd)
 
 void note_page_flush(struct ptdump_state *pt_st)
 {
-	struct ptdump_pg_state *st = container_of(pt_st, struct ptdump_pg_state, ptdump);
-	unsigned long end = st->end_address;
 	pte_t pte_zero = {0};
 
-	/*
-	 * Address spaces that end at 1 << 64 have end_address == ULONG_MAX,
-	 * but note_page() expects the exclusive end. In this case adjust end
-	 * to the wraparound value 0.
-	 */
-	if (end == ULONG_MAX)
-		end = 0;
+	note_page(pt_st, 0, -1, pte_val(pte_zero));
+}
 
-	note_page(pt_st, end, -1, pte_val(pte_zero));
+static void arm64_ptdump_walk_pgd(struct ptdump_state *st, struct mm_struct *mm)
+{
+	static_branch_inc(&arm64_ptdump_lock_key);
+	ptdump_walk_pgd(st, mm, NULL);
+	static_branch_dec(&arm64_ptdump_lock_key);
 }
 
 void ptdump_walk(struct seq_file *s, struct ptdump_info *info)
@@ -306,7 +303,6 @@ void ptdump_walk(struct seq_file *s, struct ptdump_info *info)
 		.marker = info->markers,
 		.mm = info->mm,
 		.pg_level = &kernel_pg_levels[0],
-		.end_address = end,
 		.level = -1,
 		.ptdump = {
 			.note_page_pte = note_page_pte,
@@ -322,7 +318,7 @@ void ptdump_walk(struct seq_file *s, struct ptdump_info *info)
 		}
 	};
 
-	ptdump_walk_pgd(&st.ptdump, info->mm, NULL);
+	arm64_ptdump_walk_pgd(&st.ptdump, info->mm);
 }
 
 static void __init ptdump_initialize(void)
@@ -348,7 +344,6 @@ bool ptdump_check_wx(void)
 			{ -1, NULL},
 		},
 		.pg_level = &kernel_pg_levels[0],
-		.end_address = ~0UL,
 		.level = -1,
 		.check_wx = true,
 		.ptdump = {
@@ -365,7 +360,7 @@ bool ptdump_check_wx(void)
 		}
 	};
 
-	ptdump_walk_pgd(&st.ptdump, &init_mm, NULL);
+	arm64_ptdump_walk_pgd(&st.ptdump, &init_mm);
 
 	if (st.wx_pages || st.uxn_pages) {
 		pr_warn("Checked W+X mappings: FAILED, %lu W+X pages found, %lu non-UXN pages found\n",

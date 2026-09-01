@@ -378,9 +378,15 @@ int perf_event_paranoid(void)
 
 bool perf_event_paranoid_check(int max_level)
 {
-	return perf_cap__capable(CAP_SYS_ADMIN) ||
-	       perf_cap__capable(CAP_PERFMON) ||
-	       perf_event_paranoid() <= max_level;
+	bool used_root;
+
+	if (perf_cap__capable(CAP_SYS_ADMIN, &used_root))
+		return true;
+
+	if (!used_root && perf_cap__capable(CAP_PERFMON, &used_root))
+		return true;
+
+	return perf_event_paranoid() <= max_level;
 }
 
 int perf_tip(char **strp, const char *dirpath)
@@ -413,21 +419,11 @@ out:
 
 char *perf_exe(char *buf, int len)
 {
-	int n;
-
-	if (len <= 0)
-		return buf;
-
-	n = readlink("/proc/self/exe", buf, len - 1);
+	int n = readlink("/proc/self/exe", buf, len);
 	if (n > 0) {
 		buf[n] = 0;
 		return buf;
 	}
-	if (len < (int)sizeof("perf")) {
-		buf[0] = '\0';
-		return buf;
-	}
-
 	return strcpy(buf, "perf");
 }
 

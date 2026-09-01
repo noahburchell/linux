@@ -137,25 +137,19 @@ static int __init early_init_dt_reserve_memory(phys_addr_t base,
 }
 
 /*
- * __reserved_mem_reserve_reg() - reserve memory described in the
- * first entry in 'reg' property
+ * __reserved_mem_reserve_reg() - reserve all memory described in 'reg' property
  */
 static int __init __reserved_mem_reserve_reg(unsigned long node,
 					     const char *uname)
 {
 	phys_addr_t base, size;
-	int len, err;
+	int i, len, err;
 	const __be32 *prop;
 	bool nomap;
-	u64 b, s;
 
 	prop = of_flat_dt_get_addr_size_prop(node, "reg", &len);
-	if (!prop || !len)
+	if (!prop)
 		return -ENOENT;
-
-	if (len > 1)
-		pr_warn("Reserved memory: node '%s' has %d <base size> entries, only the first is used\n",
-			uname, len);
 
 	nomap = of_get_flat_dt_prop(node, "no-map", NULL) != NULL;
 
@@ -163,17 +157,22 @@ static int __init __reserved_mem_reserve_reg(unsigned long node,
 	if (err && err != -ENODEV)
 		return err;
 
-	of_flat_dt_read_addr_size(prop, 0, &b, &s);
-	base = b;
-	size = s;
+	for (i = 0; i < len; i++) {
+		u64 b, s;
 
-	if (size && early_init_dt_reserve_memory(base, size, nomap) == 0) {
-		fdt_fixup_reserved_mem_node(node, base, size);
-		pr_debug("Reserved memory: reserved region for node '%s': base %pa, size %lu MiB\n",
-			 uname, &base, (unsigned long)(size / SZ_1M));
-	} else {
-		pr_err("Reserved memory: failed to reserve memory for node '%s': base %pa, size %lu MiB\n",
-		       uname, &base, (unsigned long)(size / SZ_1M));
+		of_flat_dt_read_addr_size(prop, i, &b, &s);
+
+		base = b;
+		size = s;
+
+		if (size && early_init_dt_reserve_memory(base, size, nomap) == 0) {
+			fdt_fixup_reserved_mem_node(node, base, size);
+			pr_debug("Reserved memory: reserved region for node '%s': base %pa, size %lu MiB\n",
+				uname, &base, (unsigned long)(size / SZ_1M));
+		} else {
+			pr_err("Reserved memory: failed to reserve memory for node '%s': base %pa, size %lu MiB\n",
+			       uname, &base, (unsigned long)(size / SZ_1M));
+		}
 	}
 	return 0;
 }
@@ -285,24 +284,20 @@ void __init fdt_scan_reserved_mem_late(void)
 	}
 
 	fdt_for_each_subnode(child, fdt, node) {
-		const __be32 *prop;
 		const char *uname;
 		u64 b, s;
 		int ret;
-		int len;
 
 		if (!of_fdt_device_is_available(fdt, child))
 			continue;
 
-		prop = of_flat_dt_get_addr_size_prop(child, "reg", &len);
-		if (!prop || !len)
+		if (!of_flat_dt_get_addr_size(child, "reg", &b, &s))
 			continue;
 
 		ret = fdt_validate_reserved_mem_node(child, NULL);
 		if (ret && ret != -ENODEV)
 			continue;
 
-		of_flat_dt_read_addr_size(prop, 0, &b, &s);
 		base = b;
 		size = s;
 
@@ -336,14 +331,11 @@ int __init fdt_scan_reserved_mem(void)
 	const void *fdt = initial_boot_params;
 
 	node = fdt_path_offset(fdt, "/reserved-memory");
-	if (node < 0) {
-		total_reserved_mem_cnt = 0;
+	if (node < 0)
 		return -ENODEV;
-	}
 
 	if (__reserved_mem_check_root(node) != 0) {
 		pr_err("Reserved memory: unsupported node format, ignoring\n");
-		total_reserved_mem_cnt = 0;
 		return -EINVAL;
 	}
 
@@ -359,7 +351,6 @@ int __init fdt_scan_reserved_mem(void)
 		err = __reserved_mem_reserve_reg(child, uname);
 		if (!err)
 			count++;
-
 		/*
 		 * Save the nodes for the dynamically-placed regions
 		 * into an array which will be used for allocation right
@@ -367,17 +358,10 @@ int __init fdt_scan_reserved_mem(void)
 		 * or marked as no-map. This is done to avoid dynamically
 		 * allocating from one of the statically-placed regions.
 		 */
-		if (err != -ENOENT || !of_get_flat_dt_prop(child, "size", NULL))
-			continue;
-
-		if (dynamic_nodes_cnt == MAX_RESERVED_REGIONS) {
-			pr_err("too many defined dynamic regions, skip '%s'\n",
-			       uname);
-			continue;
+		if (err == -ENOENT && of_get_flat_dt_prop(child, "size", NULL)) {
+			dynamic_nodes[dynamic_nodes_cnt] = child;
+			dynamic_nodes_cnt++;
 		}
-
-		dynamic_nodes[dynamic_nodes_cnt] = child;
-		dynamic_nodes_cnt++;
 	}
 	for (int i = 0; i < dynamic_nodes_cnt; i++) {
 		const char *uname;
@@ -641,8 +625,7 @@ static void __init fdt_init_reserved_mem_node(unsigned long node, const char *un
 	struct reserved_mem *rmem = &reserved_mem[reserved_mem_count];
 
 	if (reserved_mem_count == total_reserved_mem_cnt) {
-		pr_err("not enough space for all defined regions, skip '%s'\n",
-		       uname);
+		pr_err("not enough space for all defined regions.\n");
 		return;
 	}
 
@@ -796,50 +779,6 @@ void of_reserved_mem_device_release(struct device *dev)
 }
 EXPORT_SYMBOL_GPL(of_reserved_mem_device_release);
 
-static void devm_of_reserved_mem_device_release(struct device *dev, void *res)
-{
-	of_reserved_mem_device_release(*(struct device **)res);
-}
-
-static int devm_of_reserved_mem_device_init_by_idx(struct device *dev,
-						   struct device_node *np, int idx)
-{
-	struct device **ptr;
-	int ret;
-
-	ptr = devres_alloc(devm_of_reserved_mem_device_release, sizeof(*ptr),
-			   GFP_KERNEL);
-	if (!ptr)
-		return -ENOMEM;
-
-	ret = of_reserved_mem_device_init_by_idx(dev, np, idx);
-	if (ret) {
-		devres_free(ptr);
-		return ret;
-	}
-
-	*ptr = dev;
-	devres_add(dev, ptr);
-
-	return 0;
-}
-
-/**
- * devm_of_reserved_mem_device_init() - Resource managed of_reserved_mem_device_init()
- * @dev: Pointer to the device to configure
- *
- * This is a resource managed version of of_reserved_mem_device_init().
- * The reserved memory region will be released automatically when the device
- * is unbound.
- *
- * Returns: Negative errno on failure or zero on success.
- */
-int devm_of_reserved_mem_device_init(struct device *dev)
-{
-	return devm_of_reserved_mem_device_init_by_idx(dev, dev->of_node, 0);
-}
-EXPORT_SYMBOL_GPL(devm_of_reserved_mem_device_init);
-
 /**
  * of_reserved_mem_lookup() - acquire reserved_mem from a device node
  * @np:		node pointer of the desired reserved-memory region
@@ -859,8 +798,7 @@ struct reserved_mem *of_reserved_mem_lookup(struct device_node *np)
 
 	name = kbasename(np->full_name);
 	for (i = 0; i < reserved_mem_count; i++)
-		if (reserved_mem[i].name &&
-		    !strcmp(reserved_mem[i].name, name))
+		if (!strcmp(reserved_mem[i].name, name))
 			return &reserved_mem[i];
 
 	return NULL;

@@ -622,7 +622,8 @@ is_empty:
 	ntfs_debug("Done.");
 	return true;
 err_out:
-	kvfree(rstr1_ph);
+	if (rstr1_ph)
+		kvfree(rstr1_ph);
 	return false;
 }
 

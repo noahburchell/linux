@@ -3,8 +3,7 @@
 # MDIO Layer Configuration
 #
 
-menu "MDIO controller drivers"
-	depends on PHYLIB
+if PHYLIB
 
 config FWNODE_MDIO
 	def_tristate (ACPI || OF) || COMPILE_TEST
@@ -199,7 +198,7 @@ config MDIO_THUNDER
 	  ThunderX SoCs when the MDIO bus device appears as a PCI
 	  device.
 
-menu "MDIO Multiplexers"
+comment "MDIO Multiplexers"
 
 config MDIO_BUS_MUX
 	tristate
@@ -256,7 +255,7 @@ config MDIO_BUS_MUX_BCM_IPROC
 
 config MDIO_BUS_MUX_GPIO
 	tristate "GPIO controlled MDIO bus multiplexers"
-	depends on OF_MDIO
+	depends on OF_GPIO && OF_MDIO
 	select MDIO_BUS_MUX
 	help
 	  This module provides a driver for MDIO bus multiplexers that
@@ -289,5 +288,5 @@ config MDIO_BUS_MUX_MMIOREG
 
 	  Currently, only 8/16/32 bits registers are supported.
 
-endmenu
-endmenu
+
+endif

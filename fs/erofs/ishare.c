@@ -2,14 +2,21 @@
 /*
  * Copyright (C) 2024, Alibaba Cloud
  */
-#include <linux/backing-file.h>
 #include <linux/xxhash.h>
 #include <linux/mount.h>
 #include <linux/security.h>
 #include "internal.h"
 #include "xattr.h"
 
+#include "../internal.h"
+
 static struct vfsmount *erofs_ishare_mnt;
+
+static inline bool erofs_is_ishare_inode(struct inode *inode)
+{
+	/* assumed FS_ONDEMAND is excluded with FS_PAGE_CACHE_SHARE feature */
+	return inode->i_sb->s_type == &erofs_anon_fs_type;
+}
 
 static int erofs_ishare_iget5_eq(struct inode *inode, void *data)
 {
@@ -32,90 +39,97 @@ static int erofs_ishare_iget5_set(struct inode *inode, void *data)
 
 bool erofs_ishare_fill_inode(struct inode *inode)
 {
-	static const struct file_operations empty_fops = {};
 	struct erofs_sb_info *sbi = EROFS_SB(inode->i_sb);
-	const struct address_space_operations *aops;
 	struct erofs_inode *vi = EROFS_I(inode);
+	const struct address_space_operations *aops;
 	struct erofs_inode_fingerprint fp;
-	struct dentry *sd;
-	struct inode *si;
+	struct inode *sharedinode;
+	unsigned long hash;
 
-	aops = erofs_get_aops(inode);
+	aops = erofs_get_aops(inode, true);
 	if (IS_ERR(aops))
 		return false;
 	if (erofs_xattr_fill_inode_fingerprint(&fp, inode, sbi->domain_id))
 		return false;
+	hash = xxh32(fp.opaque, fp.size, 0);
+	sharedinode = iget5_locked(erofs_ishare_mnt->mnt_sb, hash,
+				   erofs_ishare_iget5_eq, erofs_ishare_iget5_set,
+				   &fp);
+	if (!sharedinode) {
+		kfree(fp.opaque);
+		return false;
+	}
 
-	si = iget5_locked(erofs_ishare_mnt->mnt_sb,
-			  xxh32(fp.opaque, fp.size, 0),
-			  erofs_ishare_iget5_eq, erofs_ishare_iget5_set, &fp);
-	if (si && (inode_state_read_once(si) & I_NEW)) {
-		si->i_fop = &empty_fops;
-		si->i_mapping->a_ops = aops;
-		si->i_mode = 0444 | S_IFREG;
-		si->i_size = inode->i_size;
-		mapping_set_large_folios(si->i_mapping);
-		unlock_new_inode(si);
+	if (inode_state_read_once(sharedinode) & I_NEW) {
+		sharedinode->i_mapping->a_ops = aops;
+		sharedinode->i_size = vi->vfs_inode.i_size;
+		unlock_new_inode(sharedinode);
 	} else {
 		kfree(fp.opaque);
-		if (!si || aops != si->i_mapping->a_ops) {
-			iput(si);
+		if (aops != sharedinode->i_mapping->a_ops) {
+			iput(sharedinode);
 			return false;
 		}
-		if (si->i_size != inode->i_size) {
-			erofs_warn(inode->i_sb, "i_size mismatch (%lld != %lld) for the same fingerprint",
-				   inode->i_size, si->i_size);
-			iput(si);
+		if (sharedinode->i_size != vi->vfs_inode.i_size) {
+			_erofs_printk(inode->i_sb, KERN_WARNING
+				"size(%lld:%lld) not matches for the same fingerprint\n",
+				vi->vfs_inode.i_size, sharedinode->i_size);
+			iput(sharedinode);
 			return false;
 		}
 	}
-	sd = d_obtain_alias(si); /* disconnected denties for sharedinodes */
-	if (IS_ERR(sd))
-		return false;
-	vi->sharedentry = sd;
+	vi->sharedinode = sharedinode;
 	INIT_LIST_HEAD(&vi->ishare_list);
-	spin_lock(&EROFS_I(si)->ishare_lock);
-	list_add(&vi->ishare_list, &EROFS_I(si)->ishare_list);
-	spin_unlock(&EROFS_I(si)->ishare_lock);
+	spin_lock(&EROFS_I(sharedinode)->ishare_lock);
+	list_add(&vi->ishare_list, &EROFS_I(sharedinode)->ishare_list);
+	spin_unlock(&EROFS_I(sharedinode)->ishare_lock);
 	return true;
 }
 
 void erofs_ishare_free_inode(struct inode *inode)
 {
-	struct erofs_inode *vi = EROFS_I(inode), *svi;
+	struct erofs_inode *vi = EROFS_I(inode);
+	struct inode *sharedinode = vi->sharedinode;
 
-	if (!vi->sharedentry)
+	if (!sharedinode)
 		return;
-	svi = EROFS_I(d_inode(vi->sharedentry));
-	spin_lock(&svi->ishare_lock);
+	spin_lock(&EROFS_I(sharedinode)->ishare_lock);
 	list_del(&vi->ishare_list);
-	spin_unlock(&svi->ishare_lock);
-	dput(vi->sharedentry);
-	vi->sharedentry = NULL;
+	spin_unlock(&EROFS_I(sharedinode)->ishare_lock);
+	iput(sharedinode);
+	vi->sharedinode = NULL;
 }
 
 static int erofs_ishare_file_open(struct inode *inode, struct file *file)
 {
-	struct path sharedpath = {
-		.mnt = erofs_ishare_mnt,
-		.dentry = EROFS_I(inode)->sharedentry,
-	};
-	struct file *rf;
+	struct inode *sharedinode = EROFS_I(inode)->sharedinode;
+	struct file *realfile;
 
 	if (file->f_flags & O_DIRECT)
 		return -EINVAL;
+	realfile = alloc_empty_backing_file(O_RDONLY|O_NOATIME, current_cred(),
+					    file);
+	if (IS_ERR(realfile))
+		return PTR_ERR(realfile);
+	ihold(sharedinode);
+	realfile->f_op = &erofs_file_fops;
+	realfile->f_inode = sharedinode;
+	realfile->f_mapping = sharedinode->i_mapping;
+	path_get(&file->f_path);
+	backing_file_set_user_path(realfile, &file->f_path);
 
-	rf = backing_file_open(file, file->f_flags | O_NOATIME,
-			       &sharedpath, current_cred());
-	if (IS_ERR(rf))
-		return PTR_ERR(rf);
-	file->private_data = rf;
+	file_ra_state_init(&realfile->f_ra, file->f_mapping);
+	realfile->private_data = EROFS_I(inode);
+	file->private_data = realfile;
 	return 0;
 }
 
 static int erofs_ishare_file_release(struct inode *inode, struct file *file)
 {
-	fput(file->private_data);
+	struct file *realfile = file->private_data;
+
+	iput(realfile->f_inode);
+	fput(realfile);
 	file->private_data = NULL;
 	return 0;
 }
@@ -149,13 +163,6 @@ static int erofs_ishare_mmap(struct file *file, struct vm_area_struct *vma)
 	return generic_file_readonly_mmap(file, vma);
 }
 
-static ssize_t erofs_ishare_splice_read(struct file *in, loff_t *ppos,
-					struct pipe_inode_info *pipe,
-					size_t len, unsigned int flags)
-{
-	return filemap_splice_read(in->private_data, ppos, pipe, len, flags);
-}
-
 static int erofs_ishare_fadvise(struct file *file, loff_t offset,
 				loff_t len, int advice)
 {
@@ -164,12 +171,12 @@ static int erofs_ishare_fadvise(struct file *file, loff_t offset,
 
 const struct file_operations erofs_ishare_fops = {
 	.open		= erofs_ishare_file_open,
-	.llseek		= erofs_file_llseek,
+	.llseek		= generic_file_llseek,
 	.read_iter	= erofs_ishare_file_read_iter,
 	.mmap		= erofs_ishare_mmap,
 	.release	= erofs_ishare_file_release,
 	.get_unmapped_area = thp_get_unmapped_area,
-	.splice_read	= erofs_ishare_splice_read,
+	.splice_read	= filemap_splice_read,
 	.fadvise	= erofs_ishare_fadvise,
 };
 
@@ -179,7 +186,7 @@ struct inode *erofs_real_inode(struct inode *inode, bool *need_iput)
 	struct inode *realinode;
 
 	*need_iput = false;
-	if (inode->i_sb != erofs_ishare_mnt->mnt_sb)
+	if (!erofs_is_ishare_inode(inode))
 		return inode;
 
 	vi_share = EROFS_I(inode);

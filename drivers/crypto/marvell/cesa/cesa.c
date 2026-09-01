@@ -18,7 +18,6 @@
 #include <linux/io.h>
 #include <linux/kthread.h>
 #include <linux/mbus.h>
-#include <linux/minmax.h>
 #include <linux/platform_device.h>
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
@@ -366,8 +365,6 @@ static int mv_cesa_dev_dma_init(struct mv_cesa_dev *cesa)
 	return 0;
 }
 
-static void mv_cesa_release_sram(void *data);
-
 static int mv_cesa_get_sram(struct platform_device *pdev, int idx)
 {
 	struct mv_cesa_dev *cesa = platform_get_drvdata(pdev);
@@ -380,13 +377,11 @@ static int mv_cesa_get_sram(struct platform_device *pdev, int idx)
 		engine->sram_pool = gen_pool_dma_alloc(engine->pool,
 						       cesa->sram_size,
 						       &engine->sram_dma);
-		if (!engine->sram_pool) {
-			engine->pool = NULL;
-			return -ENOMEM;
-		}
+		if (engine->sram_pool)
+			return 0;
 
-		return devm_add_action_or_reset(cesa->dev, mv_cesa_release_sram,
-					engine);
+		engine->pool = NULL;
+		return -ENOMEM;
 	}
 
 	engine->sram = devm_platform_get_and_ioremap_resource(pdev, idx, &res);
@@ -399,13 +394,13 @@ static int mv_cesa_get_sram(struct platform_device *pdev, int idx)
 	if (dma_mapping_error(cesa->dev, engine->sram_dma))
 		return -ENOMEM;
 
-	return devm_add_action_or_reset(cesa->dev, mv_cesa_release_sram, engine);
+	return 0;
 }
 
-static void mv_cesa_release_sram(void *data)
+static void mv_cesa_put_sram(struct platform_device *pdev, int idx)
 {
-	struct mv_cesa_engine *engine = data;
-	struct mv_cesa_dev *cesa = engine->cesa;
+	struct mv_cesa_dev *cesa = platform_get_drvdata(pdev);
+	struct mv_cesa_engine *engine = &cesa->engines[idx];
 
 	if (engine->pool)
 		gen_pool_free(engine->pool, (unsigned long)engine->sram_pool,
@@ -421,7 +416,7 @@ static int mv_cesa_probe(struct platform_device *pdev)
 	const struct mbus_dram_target_info *dram;
 	struct device *dev = &pdev->dev;
 	struct mv_cesa_dev *cesa;
-	struct mv_cesa_engine *engine;
+	struct mv_cesa_engine *engines;
 	int irq, ret, i, cpu;
 	u32 sram_size;
 
@@ -436,8 +431,7 @@ static int mv_cesa_probe(struct platform_device *pdev)
 			return -ENOTSUPP;
 	}
 
-	cesa = devm_kzalloc(dev, struct_size(cesa, engines, caps->nengines),
-			GFP_KERNEL);
+	cesa = devm_kzalloc(dev, sizeof(*cesa), GFP_KERNEL);
 	if (!cesa)
 		return -ENOMEM;
 
@@ -447,8 +441,14 @@ static int mv_cesa_probe(struct platform_device *pdev)
 	sram_size = CESA_SA_DEFAULT_SRAM_SIZE;
 	of_property_read_u32(cesa->dev->of_node, "marvell,crypto-sram-size",
 			     &sram_size);
+	if (sram_size < CESA_SA_MIN_SRAM_SIZE)
+		sram_size = CESA_SA_MIN_SRAM_SIZE;
 
-	cesa->sram_size = max(sram_size, CESA_SA_MIN_SRAM_SIZE);
+	cesa->sram_size = sram_size;
+	cesa->engines = devm_kcalloc(dev, caps->nengines, sizeof(*engines),
+				     GFP_KERNEL);
+	if (!cesa->engines)
+		return -ENOMEM;
 
 	spin_lock_init(&cesa->lock);
 
@@ -465,20 +465,21 @@ static int mv_cesa_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, cesa);
 
 	for (i = 0; i < caps->nengines; i++) {
-		engine = &cesa->engines[i];
+		struct mv_cesa_engine *engine = &cesa->engines[i];
 		char res_name[16];
 
 		engine->id = i;
-		engine->cesa = cesa;
 		spin_lock_init(&engine->lock);
 
 		ret = mv_cesa_get_sram(pdev, i);
 		if (ret)
-			return ret;
+			goto err_cleanup;
 
 		irq = platform_get_irq(pdev, i);
-		if (irq < 0)
-			return irq;
+		if (irq < 0) {
+			ret = irq;
+			goto err_cleanup;
+		}
 
 		engine->irq = irq;
 
@@ -490,14 +491,18 @@ static int mv_cesa_probe(struct platform_device *pdev)
 		engine->clk = devm_clk_get_optional_enabled(dev, res_name);
 		if (IS_ERR(engine->clk)) {
 			engine->clk = devm_clk_get_optional_enabled(dev, NULL);
-			if (IS_ERR(engine->clk))
-				return PTR_ERR(engine->clk);
+			if (IS_ERR(engine->clk)) {
+				ret = PTR_ERR(engine->clk);
+				goto err_cleanup;
+			}
 		}
 
 		snprintf(res_name, sizeof(res_name), "cesaz%u", i);
 		engine->zclk = devm_clk_get_optional_enabled(dev, res_name);
-		if (IS_ERR(engine->zclk))
-			return PTR_ERR(engine->zclk);
+		if (IS_ERR(engine->zclk)) {
+			ret = PTR_ERR(engine->zclk);
+			goto err_cleanup;
+		}
 
 		engine->regs = cesa->regs + CESA_ENGINE_OFF(i);
 
@@ -515,7 +520,7 @@ static int mv_cesa_probe(struct platform_device *pdev)
 						dev_name(&pdev->dev),
 						engine);
 		if (ret)
-			return ret;
+			goto err_cleanup;
 
 		/* Set affinity */
 		cpu = cpumask_local_spread(engine->id, NUMA_NO_NODE);
@@ -531,21 +536,29 @@ static int mv_cesa_probe(struct platform_device *pdev)
 	ret = mv_cesa_add_algs(cesa);
 	if (ret) {
 		cesa_dev = NULL;
-		return ret;
+		goto err_cleanup;
 	}
 
 	dev_info(dev, "CESA device successfully registered\n");
 
 	return 0;
+
+err_cleanup:
+	for (i = 0; i < caps->nengines; i++)
+		mv_cesa_put_sram(pdev, i);
+
+	return ret;
 }
 
 static void mv_cesa_remove(struct platform_device *pdev)
 {
 	struct mv_cesa_dev *cesa = platform_get_drvdata(pdev);
+	int i;
 
 	mv_cesa_remove_algs(cesa);
 
-	cesa_dev = NULL;
+	for (i = 0; i < cesa->caps->nengines; i++)
+		mv_cesa_put_sram(pdev, i);
 }
 
 static const struct platform_device_id mv_cesa_plat_id_table[] = {

@@ -130,12 +130,15 @@ static int brx_set_format(struct v4l2_subdev *subdev,
 	struct vsp1_brx *brx = to_brx(subdev);
 	struct v4l2_subdev_state *state;
 	struct v4l2_mbus_framefmt *format;
+	int ret = 0;
 
-	guard(mutex)(&brx->entity.lock);
+	mutex_lock(&brx->entity.lock);
 
 	state = vsp1_entity_get_state(&brx->entity, sd_state, fmt->which);
-	if (!state)
-		return -EINVAL;
+	if (!state) {
+		ret = -EINVAL;
+		goto done;
+	}
 
 	brx_try_format(brx, state, fmt->pad, &fmt->format);
 
@@ -155,13 +158,17 @@ static int brx_set_format(struct v4l2_subdev *subdev,
 
 	/* Propagate the format code to all pads. */
 	if (fmt->pad == BRX_PAD_SINK(0)) {
-		for (unsigned int i = 0; i <= brx->entity.source_pad; ++i) {
+		unsigned int i;
+
+		for (i = 0; i <= brx->entity.source_pad; ++i) {
 			format = v4l2_subdev_state_get_format(state, i);
 			format->code = fmt->format.code;
 		}
 	}
 
-	return 0;
+done:
+	mutex_unlock(&brx->entity.lock);
+	return ret;
 }
 
 static int brx_get_selection(struct v4l2_subdev *subdev,
@@ -188,10 +195,9 @@ static int brx_get_selection(struct v4l2_subdev *subdev,
 		if (!state)
 			return -EINVAL;
 
-		scoped_guard(mutex, &brx->entity.lock) {
-			sel->r = *v4l2_subdev_state_get_compose(state, sel->pad);
-		}
-
+		mutex_lock(&brx->entity.lock);
+		sel->r = *v4l2_subdev_state_get_compose(state, sel->pad);
+		mutex_unlock(&brx->entity.lock);
 		return 0;
 
 	default:
@@ -207,6 +213,7 @@ static int brx_set_selection(struct v4l2_subdev *subdev,
 	struct v4l2_subdev_state *state;
 	struct v4l2_mbus_framefmt *format;
 	struct v4l2_rect *compose;
+	int ret = 0;
 
 	if (sel->pad == brx->entity.source_pad)
 		return -EINVAL;
@@ -214,11 +221,13 @@ static int brx_set_selection(struct v4l2_subdev *subdev,
 	if (sel->target != V4L2_SEL_TGT_COMPOSE)
 		return -EINVAL;
 
-	guard(mutex)(&brx->entity.lock);
+	mutex_lock(&brx->entity.lock);
 
 	state = vsp1_entity_get_state(&brx->entity, sd_state, sel->which);
-	if (!state)
-		return -EINVAL;
+	if (!state) {
+		ret = -EINVAL;
+		goto done;
+	}
 
 	/*
 	 * The compose rectangle top left corner must be inside the output
@@ -239,7 +248,9 @@ static int brx_set_selection(struct v4l2_subdev *subdev,
 	compose = v4l2_subdev_state_get_compose(state, sel->pad);
 	*compose = sel->r;
 
-	return 0;
+done:
+	mutex_unlock(&brx->entity.lock);
+	return ret;
 }
 
 static const struct v4l2_subdev_pad_ops brx_pad_ops = {
@@ -269,6 +280,7 @@ static void brx_configure_stream(struct vsp1_entity *entity,
 	struct vsp1_brx *brx = to_brx(&entity->subdev);
 	struct v4l2_mbus_framefmt *format;
 	unsigned int flags;
+	unsigned int i;
 
 	format = v4l2_subdev_state_get_format(state, brx->entity.source_pad);
 
@@ -312,7 +324,7 @@ static void brx_configure_stream(struct vsp1_entity *entity,
 			       VI6_BRU_ROP_CROP(VI6_ROP_NOP) |
 			       VI6_BRU_ROP_AROP(VI6_ROP_NOP));
 
-	for (unsigned int i = 0; i < brx->entity.source_pad; ++i) {
+	for (i = 0; i < brx->entity.source_pad; ++i) {
 		bool premultiplied = false;
 		u32 ctrl = 0;
 

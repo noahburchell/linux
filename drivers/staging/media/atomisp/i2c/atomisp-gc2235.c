@@ -433,7 +433,7 @@ static int power_up(struct v4l2_subdev *sd)
 			goto fail_power;
 	}
 
-	fsleep(5000);
+	msleep(5);
 	return 0;
 
 fail_clk:

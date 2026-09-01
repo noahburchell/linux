@@ -13,6 +13,7 @@
 #include <linux/device.h>
 #include <linux/iio/iio.h>
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/spi/spi.h>
 
 #include <linux/unaligned.h>
@@ -187,11 +188,8 @@ static int adrf6780_read_adc_raw(struct adrf6780_state *st, unsigned int *read_v
 	if (ret)
 		goto exit;
 
-	/*
-	 * Per ADRF6780 datasheet (Rev. D, page 23, ADC section),
-	 * wait approximately 200 us for the ADC to be ready.
-	 */
-	fsleep(200);
+	/* Recommended delay for the ADC to be ready*/
+	usleep_range(200, 250);
 
 	ret = __adrf6780_spi_read(st, ADRF6780_REG_ADC_OUTPUT, read_val);
 	if (ret)
@@ -486,7 +484,7 @@ static int adrf6780_probe(struct spi_device *spi)
 }
 
 static const struct spi_device_id adrf6780_id[] = {
-	{ .name = "adrf6780" },
+	{ "adrf6780", 0 },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, adrf6780_id);

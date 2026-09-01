@@ -96,7 +96,7 @@ static int cbs_child_enqueue(struct sk_buff *skb, struct Qdisc *sch,
 	if (err != NET_XMIT_SUCCESS)
 		return err;
 
-	qstats_backlog_add(sch, len);
+	sch->qstats.backlog += len;
 	qdisc_qlen_inc(sch);
 
 	return NET_XMIT_SUCCESS;
@@ -327,7 +327,7 @@ static void cbs_set_port_rate(struct net_device *dev, struct cbs_sched_data *q)
 	s64 port_rate;
 	int err;
 
-	err = netif_get_link_ksettings(dev, &ecmd);
+	err = __ethtool_get_link_ksettings(dev, &ecmd);
 	if (err < 0)
 		goto skip;
 
@@ -340,7 +340,7 @@ skip:
 	atomic64_set(&q->port_rate, port_rate);
 	netdev_dbg(dev, "cbs: set %s's port_rate to: %lld, linkspeed: %d\n",
 		   dev->name, (long long)atomic64_read(&q->port_rate),
-		   speed);
+		   ecmd.base.speed);
 }
 
 static int cbs_dev_notifier(struct notifier_block *nb, unsigned long event,

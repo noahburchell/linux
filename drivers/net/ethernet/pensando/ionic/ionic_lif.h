@@ -214,6 +214,7 @@ struct ionic_lif {
 	bool registered;
 	bool doorbell_wa;
 	u16 lif_type;
+	unsigned int link_down_count;
 	unsigned int nmcast;
 	unsigned int nucast;
 	unsigned int nvlans;
@@ -248,7 +249,7 @@ struct ionic_lif {
 };
 
 struct ionic_phc {
-	spinlock_t lock; /* lock for state_page, cc and tc */
+	spinlock_t lock; /* lock for cc and tc */
 	struct cyclecounter cc;
 	struct timecounter tc;
 
@@ -261,7 +262,6 @@ struct ionic_phc {
 	long aux_work_delay;
 
 	struct ptp_clock_info ptp_info;
-	struct ib_uverbs_clock_info *state_page;
 	struct ptp_clock *ptp;
 	struct ionic_lif *lif;
 };

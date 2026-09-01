@@ -1557,8 +1557,9 @@ drm_gpuvm_resv_add_fence(struct drm_gpuvm *gpuvm,
 			 enum dma_resv_usage extobj_usage)
 {
 	struct drm_gem_object *obj;
+	unsigned long index;
 
-	drm_exec_for_each_locked_object(exec, obj) {
+	drm_exec_for_each_locked_object(exec, index, obj) {
 		dma_resv_assert_held(obj->resv);
 		dma_resv_add_fence(obj->resv, fence,
 				   drm_gpuvm_is_extobj(gpuvm, obj) ?
@@ -2228,6 +2229,50 @@ out:
 	return NULL;
 }
 EXPORT_SYMBOL_GPL(drm_gpuva_find);
+
+/**
+ * drm_gpuva_find_prev() - find the &drm_gpuva before the given address
+ * @gpuvm: the &drm_gpuvm to search in
+ * @start: the given GPU VA's start address
+ *
+ * Find the adjacent &drm_gpuva before the GPU VA with given &start address.
+ *
+ * Note that if there is any free space between the GPU VA mappings no mapping
+ * is returned.
+ *
+ * Returns: a pointer to the found &drm_gpuva or NULL if none was found
+ */
+struct drm_gpuva *
+drm_gpuva_find_prev(struct drm_gpuvm *gpuvm, u64 start)
+{
+	if (!drm_gpuvm_range_valid(gpuvm, start - 1, 1))
+		return NULL;
+
+	return drm_gpuva_it_iter_first(&gpuvm->rb.tree, start - 1, start);
+}
+EXPORT_SYMBOL_GPL(drm_gpuva_find_prev);
+
+/**
+ * drm_gpuva_find_next() - find the &drm_gpuva after the given address
+ * @gpuvm: the &drm_gpuvm to search in
+ * @end: the given GPU VA's end address
+ *
+ * Find the adjacent &drm_gpuva after the GPU VA with given &end address.
+ *
+ * Note that if there is any free space between the GPU VA mappings no mapping
+ * is returned.
+ *
+ * Returns: a pointer to the found &drm_gpuva or NULL if none was found
+ */
+struct drm_gpuva *
+drm_gpuva_find_next(struct drm_gpuvm *gpuvm, u64 end)
+{
+	if (!drm_gpuvm_range_valid(gpuvm, end, 1))
+		return NULL;
+
+	return drm_gpuva_it_iter_first(&gpuvm->rb.tree, end, end + 1);
+}
+EXPORT_SYMBOL_GPL(drm_gpuva_find_next);
 
 /**
  * drm_gpuvm_interval_empty() - indicate whether a given interval of the VA space

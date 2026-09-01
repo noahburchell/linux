@@ -94,7 +94,6 @@
 #include <linux/io_uring/cmd.h>
 #include <uapi/linux/lsm.h>
 #include <linux/memfd.h>
-#include <uapi/linux/inet_diag.h>
 
 #include "initcalls.h"
 #include "avc.h"
@@ -107,7 +106,6 @@
 #include "netlabel.h"
 #include "audit.h"
 #include "avc_ss.h"
-#include "ima.h"
 
 #define SELINUX_INODE_INIT_XATTRS 1
 
@@ -1338,11 +1336,11 @@ static int selinux_genfs_get_sid(struct dentry *dentry,
 	struct super_block *sb = dentry->d_sb;
 	char *buffer, *path;
 
-	buffer = kmalloc(PATH_MAX, GFP_KERNEL);
+	buffer = (char *)__get_free_page(GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
 
-	path = dentry_path_raw(dentry, buffer, PATH_MAX);
+	path = dentry_path_raw(dentry, buffer, PAGE_SIZE);
 	if (IS_ERR(path))
 		rc = PTR_ERR(path);
 	else {
@@ -1363,7 +1361,7 @@ static int selinux_genfs_get_sid(struct dentry *dentry,
 			rc = 0;
 		}
 	}
-	kfree(buffer);
+	free_page((unsigned long)buffer);
 	return rc;
 }
 
@@ -2976,10 +2974,6 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
 
 	sbsec = selinux_superblock(dir->i_sb);
 
-	if (!selinux_initialized() ||
-	    !(sbsec->flags & SBLABEL_MNT))
-		return -EOPNOTSUPP;
-
 	newsid = crsec->create_sid;
 	newsclass = inode_mode_to_security_class(inode->i_mode);
 	rc = selinux_determine_inode_label(crsec, dir, qstr, newsclass, &newsid);
@@ -2993,6 +2987,10 @@ static int selinux_inode_init_security(struct inode *inode, struct inode *dir,
 		isec->sid = newsid;
 		isec->initialized = LABEL_INITIALIZED;
 	}
+
+	if (!selinux_initialized() ||
+	    !(sbsec->flags & SBLABEL_MNT))
+		return -EOPNOTSUPP;
 
 	xattr = lsm_get_xattr_slot(xattrs, xattr_count);
 	if (xattr) {
@@ -3682,12 +3680,16 @@ static int selinux_inode_setsecurity(struct inode *inode, const char *name,
 	return 0;
 }
 
-static int selinux_inode_listsecurity(struct inode *inode, char **buffer,
-				ssize_t *remaining_size)
+static int selinux_inode_listsecurity(struct inode *inode, char *buffer, size_t buffer_size)
 {
+	const int len = sizeof(XATTR_NAME_SELINUX);
+
 	if (!selinux_initialized())
 		return 0;
-	return xattr_list_one(buffer, remaining_size, XATTR_NAME_SELINUX);
+
+	if (buffer && len <= buffer_size)
+		memcpy(buffer, XATTR_NAME_SELINUX, len);
+	return len;
 }
 
 static void selinux_inode_getlsmprop(struct inode *inode, struct lsm_prop *prop)
@@ -6298,17 +6300,12 @@ static int selinux_netlink_send(struct sock *sk, struct sk_buff *skb)
 				return rc;
 		} else if (rc == -EINVAL) {
 			/* -EINVAL is a missing msg/perm mapping */
-			if (sclass == SECCLASS_NETLINK_TCPDIAG_SOCKET &&
-			    nlh->nlmsg_type == DCCPDIAG_GETSOCK)
-				pr_warn_once("SELinux: DCCP has been removed, pid=%d comm=%s\n",
-					     task_pid_nr(current), current->comm);
-			else
-				pr_warn_ratelimited("SELinux: unrecognized netlink"
-					" message: protocol=%hu nlmsg_type=%hu sclass=%s"
-					" pid=%d comm=%s\n",
-					sk->sk_protocol, nlh->nlmsg_type,
-					secclass_map[sclass - 1].name,
-					task_pid_nr(current), current->comm);
+			pr_warn_ratelimited("SELinux: unrecognized netlink"
+				" message: protocol=%hu nlmsg_type=%hu sclass=%s"
+				" pid=%d comm=%s\n",
+				sk->sk_protocol, nlh->nlmsg_type,
+				secclass_map[sclass - 1].name,
+				task_pid_nr(current), current->comm);
 			if (enforcing_enabled() &&
 			    !security_get_allow_unknown())
 				return rc;
@@ -7880,8 +7877,6 @@ static __init int selinux_init(void)
 	ebitmap_cache_init();
 
 	hashtab_cache_init();
-
-	selinux_ima_config_len_init();
 
 	security_add_hooks(selinux_hooks, ARRAY_SIZE(selinux_hooks),
 			   &selinux_lsmid);

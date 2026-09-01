@@ -30,8 +30,10 @@ static int sbi_hsm_hart_start(unsigned long hartid, unsigned long saddr,
 
 	ret = sbi_ecall(SBI_EXT_HSM, SBI_EXT_HSM_HART_START,
 			hartid, saddr, priv, 0, 0, 0);
-
-	return sbi_err_map_linux_errno(ret.error);
+	if (ret.error)
+		return sbi_err_map_linux_errno(ret.error);
+	else
+		return 0;
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -41,7 +43,10 @@ static int sbi_hsm_hart_stop(void)
 
 	ret = sbi_ecall(SBI_EXT_HSM, SBI_EXT_HSM_HART_STOP, 0, 0, 0, 0, 0, 0);
 
-	return sbi_err_map_linux_errno(ret.error);
+	if (ret.error)
+		return sbi_err_map_linux_errno(ret.error);
+	else
+		return 0;
 }
 
 static int sbi_hsm_hart_get_status(unsigned long hartid)

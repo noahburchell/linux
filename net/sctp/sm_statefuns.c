@@ -4455,12 +4455,9 @@ static enum sctp_ierror sctp_sf_authenticate(
 
 	memset(digest, 0, sig_len);
 
-	if (sctp_auth_calculate_hmac(asoc, chunk->skb,
-				     (struct sctp_auth_chunk *)chunk->chunk_hdr,
-				     sh_key, GFP_ATOMIC)) {
-		kfree(save_digest);
-		return SCTP_IERROR_NOMEM;
-	}
+	sctp_auth_calculate_hmac(asoc, chunk->skb,
+				 (struct sctp_auth_chunk *)chunk->chunk_hdr,
+				 sh_key, GFP_ATOMIC);
 
 	/* Discard the packet if the digests do not match */
 	if (crypto_memneq(save_digest, digest, sig_len)) {
@@ -6148,12 +6145,8 @@ enum sctp_disposition sctp_sf_t4_timer_expire(
 					struct sctp_cmd_seq *commands)
 {
 	struct sctp_chunk *chunk = asoc->addip_last_asconf;
-	struct sctp_transport *transport;
+	struct sctp_transport *transport = chunk->transport;
 
-	if (!chunk)
-		return SCTP_DISPOSITION_CONSUME;
-
-	transport = chunk->transport;
 	SCTP_INC_STATS(net, SCTP_MIB_T4_RTO_EXPIREDS);
 
 	/* ADDIP 4.1 B1) Increment the error counters and perform path failure

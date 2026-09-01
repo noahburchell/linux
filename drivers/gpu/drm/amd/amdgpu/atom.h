@@ -133,7 +133,6 @@ struct atom_context {
 	struct card_info *card;
 	struct mutex mutex;
 	void *bios;
-	uint32_t bios_size;
 	uint32_t cmd_table, data_table;
 	uint16_t *iio;
 
@@ -154,14 +153,11 @@ struct atom_context {
 	uint8_t vbios_ver_str[STRLEN_NORMAL];
 	uint8_t date[STRLEN_NORMAL];
 	uint8_t build_num[STRLEN_NORMAL];
-
-	/* Nesting depth for ATOM_OP_CALLTABLE */
-	unsigned int execute_depth;
 };
 
 extern int amdgpu_atom_debug;
 
-struct atom_context *amdgpu_atom_parse(struct card_info *card, void *bios, uint32_t bios_size);
+struct atom_context *amdgpu_atom_parse(struct card_info *card, void *bios);
 int amdgpu_atom_execute_table(struct atom_context *ctx, int index, uint32_t *params, int params_size);
 int amdgpu_atom_asic_init(struct atom_context *ctx);
 void amdgpu_atom_destroy(struct atom_context *ctx);

@@ -36,26 +36,12 @@
 #define IP_VS_HDR_INVERSE	1
 #define IP_VS_HDR_ICMP		2
 
-/* Destination Server Flags */
-#define IP_VS_DEST_F_OVERLOAD	0x0002		/* server is overloaded */
-
-/* Destination Server Config Flags */
-#define IP_VS_DEST_CF_AVAILABLE	0x0001		/* server is available */
-
 /* conn_tab limits (as per Kconfig) */
 #define IP_VS_CONN_TAB_MIN_BITS	8
 #if BITS_PER_LONG > 32
 #define IP_VS_CONN_TAB_MAX_BITS	27
 #else
 #define IP_VS_CONN_TAB_MAX_BITS	20
-#endif
-
-/* conn_max limits */
-#if BITS_PER_LONG > 32
-/* Limit of atomic_t but restricted by roundup_pow_of_two() in ip_vs_core.c */
-#define IP_VS_CONN_MAX	(1 << 30)
-#else
-#define IP_VS_CONN_MAX	(1 << 24)
 #endif
 
 /* svc_table limits */
@@ -982,7 +968,6 @@ struct ip_vs_dest {
 	volatile unsigned int	flags;		/* dest status flags */
 	atomic_t		conn_flags;	/* flags to copy to conn */
 	atomic_t		weight;		/* server weight */
-	unsigned long		cflags;		/* config flags */
 	atomic_t		last_weight;	/* server latest weight */
 	__u16			tun_type;	/* tunnel type */
 	__be16			tun_port;	/* tunnel port */
@@ -994,11 +979,10 @@ struct ip_vs_dest {
 
 	/* connection counters and thresholds */
 	atomic_t		activeconns;	/* active connections */
-	atomic_t		totalconns;	/* total connections */
+	atomic_t		inactconns;	/* inactive connections */
 	atomic_t		persistconns;	/* persistent connections */
 	__u32			u_threshold;	/* upper threshold */
 	__u32			l_threshold;	/* lower threshold */
-	__u32			l_threshold_val;/* used lower threshold */
 
 	/* for destination cache */
 	spinlock_t		dst_lock;	/* lock of dst_cache */
@@ -1237,10 +1221,6 @@ struct netns_ipvs {
 	/* sysctl variables */
 	int			sysctl_amemthresh;
 	int			sysctl_am_droprate;
-#ifdef CONFIG_SYSCTL
-	int			sysctl_conn_max;/* soft limit for conns */
-	int			conn_max_limit;	/* hard limit for conn_max */
-#endif
 	int			sysctl_drop_entry;
 	int			sysctl_drop_packet;
 	int			sysctl_secure_tcp;
@@ -1337,11 +1317,6 @@ struct netns_ipvs {
 #define IPVS_SYNC_PORTS_MAX	(1 << 6)
 
 #ifdef CONFIG_SYSCTL
-
-static inline int sysctl_conn_max(struct netns_ipvs *ipvs)
-{
-	return READ_ONCE(ipvs->sysctl_conn_max);
-}
 
 static inline int sysctl_sync_threshold(struct netns_ipvs *ipvs)
 {
@@ -1461,11 +1436,6 @@ static inline int sysctl_est_nice(struct netns_ipvs *ipvs)
 }
 
 #else
-
-static inline int sysctl_conn_max(struct netns_ipvs *ipvs)
-{
-	return IP_VS_CONN_MAX;
-}
 
 static inline int sysctl_sync_threshold(struct netns_ipvs *ipvs)
 {
@@ -1915,8 +1885,6 @@ static inline void ip_vs_dest_put_and_free(struct ip_vs_dest *dest)
 		kfree(dest);
 }
 
-void ip_vs_dest_update_overload(struct ip_vs_dest *dest, int mode);
-
 /* IPVS sync daemon data and function prototypes
  * (from ip_vs_sync.c)
  */
@@ -1982,8 +1950,8 @@ int ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 int ip_vs_dr_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		  struct ip_vs_protocol *pp, struct ip_vs_iphdr *iph);
 int ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
-		    struct ip_vs_protocol *pp, unsigned int toff,
-		    unsigned int hooknum, struct ip_vs_iphdr *ciph);
+		    struct ip_vs_protocol *pp, int offset,
+		    unsigned int hooknum, struct ip_vs_iphdr *iph);
 void ip_vs_dest_dst_rcu_free(struct rcu_head *head);
 
 #ifdef CONFIG_IP_VS_IPV6
@@ -1996,8 +1964,8 @@ int ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 int ip_vs_dr_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 		     struct ip_vs_protocol *pp, struct ip_vs_iphdr *iph);
 int ip_vs_icmp_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
-		       struct ip_vs_protocol *pp, unsigned int toff,
-		       unsigned int hooknum, struct ip_vs_iphdr *ciph);
+		       struct ip_vs_protocol *pp, int offset,
+		       unsigned int hooknum, struct ip_vs_iphdr *iph);
 #endif
 
 #ifdef CONFIG_SYSCTL
@@ -2068,15 +2036,15 @@ static inline bool ip_vs_conn_use_hash2(struct ip_vs_conn *cp)
 	       !(cp->flags & IP_VS_CONN_F_TEMPLATE);
 }
 
-bool ip_vs_nat_icmp(struct sk_buff *skb, struct ip_vs_protocol *pp,
-		    struct ip_vs_conn *cp, int dir, unsigned int toff,
-		    bool has_ports, struct ip_vs_iphdr *ciph);
+void ip_vs_nat_icmp(struct sk_buff *skb, struct ip_vs_protocol *pp,
+		    struct ip_vs_conn *cp, int dir);
 
 #ifdef CONFIG_IP_VS_IPV6
 void ip_vs_nat_icmp_v6(struct sk_buff *skb, struct ip_vs_protocol *pp,
-		       struct ip_vs_conn *cp, int dir, unsigned int toff,
-		       bool has_ports, struct ip_vs_iphdr *ciph);
+		       struct ip_vs_conn *cp, int dir);
 #endif
+
+__sum16 ip_vs_checksum_complete(struct sk_buff *skb, int offset);
 
 static inline __wsum ip_vs_check_diff4(__be32 old, __be32 new, __wsum oldsum)
 {
@@ -2103,26 +2071,6 @@ static inline __wsum ip_vs_check_diff2(__be16 old, __be16 new, __wsum oldsum)
 	return csum_partial(diff, sizeof(diff), oldsum);
 }
 
-static inline bool ip_vs_checksum_needed(struct sk_buff *skb)
-{
-	/* Checksum unnecessary or already validated? */
-	if (skb_csum_unnecessary(skb))
-		return false;
-	/* Locally generated ? */
-	if (!skb->dev)
-		return false;
-	return true;
-}
-
-static inline bool ip_vs_checksum_common_check(struct sk_buff *skb,
-					       int offset, int proto, int af)
-{
-	if (!ip_vs_checksum_needed(skb))
-		return true;
-	/* Validate csum even for FORWARD */
-	return !nf_checksum(skb, NF_INET_LOCAL_IN, offset, proto, af);
-}
-
 /* Forget current conntrack (unconfirmed) and attach notrack entry */
 static inline void ip_vs_notrack(struct sk_buff *skb)
 {
@@ -2131,7 +2079,7 @@ static inline void ip_vs_notrack(struct sk_buff *skb)
 	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
 
 	if (ct) {
-		nf_reset_ct(skb);
+		nf_conntrack_put(&ct->ct_general);
 		nf_ct_set(skb, NULL, IP_CT_UNTRACKED);
 	}
 #endif
@@ -2154,7 +2102,7 @@ void ip_vs_update_conntrack(struct sk_buff *skb, struct ip_vs_conn *cp,
 			    int outin);
 int ip_vs_confirm_conntrack(struct sk_buff *skb);
 void ip_vs_nfct_expect_related(struct sk_buff *skb, struct nf_conn *ct,
-			       struct ip_vs_conn *cp, u8 proto,
+			       struct ip_vs_conn *cp, u_int8_t proto,
 			       const __be16 port, int from_rs);
 void ip_vs_conn_drop_conntrack(struct ip_vs_conn *cp);
 
@@ -2230,21 +2178,14 @@ void ip_vs_unregister_hooks(struct netns_ipvs *ipvs, unsigned int af);
 static inline int
 ip_vs_dest_conn_overhead(struct ip_vs_dest *dest)
 {
-	/* We think the overhead of processing active connections is 257
+	/* We think the overhead of processing active connections is 256
 	 * times higher than that of inactive connections in average. (This
-	 * 257 times might not be accurate, we will change it later) We
+	 * 256 times might not be accurate, we will change it later) We
 	 * use the following formula to estimate the overhead now:
-	 *		  dest->activeconns*256 + dest->totalconns
+	 *		  dest->activeconns*256 + dest->inactconns
 	 */
 	return (atomic_read(&dest->activeconns) << 8) +
-		atomic_read(&dest->totalconns);
-}
-
-static inline int
-ip_vs_dest_inactconns(const struct ip_vs_dest *dest)
-{
-	return max(atomic_read(&dest->totalconns) -
-		   atomic_read(&dest->activeconns), 0);
+		atomic_read(&dest->inactconns);
 }
 
 #ifdef CONFIG_IP_VS_PROTO_TCP

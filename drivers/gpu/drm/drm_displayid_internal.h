@@ -67,6 +67,7 @@ struct drm_edid;
 #define DATA_BLOCK_2_TILED_DISPLAY_TOPOLOGY	0x28
 #define DATA_BLOCK_2_CONTAINER_ID		0x29
 #define DATA_BLOCK_2_TYPE_10_FORMULA_TIMING	0x2a
+#define DATA_BLOCK_2_ADAPTIVE_SYNC		0x2b
 #define DATA_BLOCK_2_VENDOR_SPECIFIC		0x7e
 #define DATA_BLOCK_2_CTA_DISPLAY_ID		0x81
 
@@ -97,6 +98,7 @@ struct displayid_header {
 	u8 ext_count;
 } __packed;
 
+#define DISPLAYID_BLOCK_REV	GENMASK(2, 0)
 struct displayid_block {
 	u8 tag;
 	u8 rev;
@@ -125,6 +127,7 @@ struct displayid_detailed_timings_1 {
 	__le16 vsw;
 } __packed;
 
+#define DISPLAYID_BLOCK_PASSTHROUGH_TIMINGS_SUPPORT	BIT(3)
 struct displayid_detailed_timing_block {
 	struct displayid_block base;
 	struct displayid_detailed_timings_1 timings[];
@@ -137,43 +140,28 @@ struct displayid_formula_timings_9 {
 	u8 vrefresh;
 } __packed;
 
+#define DISPLAYID_BLOCK_DESCRIPTOR_PAYLOAD_BYTES	GENMASK(6, 4)
 struct displayid_formula_timing_block {
 	struct displayid_block base;
 	struct displayid_formula_timings_9 timings[];
 } __packed;
 
-#define DISPLAYID_DEVICE_TECH_UNSPECIFIED	0
-#define DISPLAYID_DEVICE_TECH_LCD		1
-#define DISPLAYID_DEVICE_TECH_OLED		2
-
-#define DISPLAYID_DISPLAY_PARAMS_DEVICE_TECH	GENMASK(6, 4)
-
-struct displayid_display_params_block {
-	struct displayid_block base;
-	__le16 horiz_image_size;
-	__le16 vert_image_size;
-	__le16 horiz_pixel_count;
-	__le16 vert_pixel_count;
-	u8 features;
-	u8 primary_color1[3];
-	u8 primary_color2[3];
-	u8 primary_color3[3];
-	u8 white_point[3];
-	__le16 max_luminance_full;
-	__le16 max_luminance_10;
-	__le16 min_luminance;
-	u8 color_depth_and_tech;	/* [2:0] depth, [6:4] device tech, [7] theme */
-	u8 gamma_eotf;
-} __packed;
-
+#define DISPLAYID_VESA_DP_TYPE		GENMASK(2, 0)
 #define DISPLAYID_VESA_MSO_OVERLAP	GENMASK(3, 0)
 #define DISPLAYID_VESA_MSO_MODE		GENMASK(6, 5)
+#define DISPLAYID_VESA_DSC_BPP_INT	GENMASK(5, 0)
+#define DISPLAYID_VESA_DSC_BPP_FRACT	GENMASK(3, 0)
+
+#define DISPLAYID_VESA_DP_TYPE_EDP	0
+#define DISPLAYID_VESA_DP_TYPE_DP	1
 
 struct displayid_vesa_vendor_specific_block {
 	struct displayid_block base;
 	u8 oui[3];
 	u8 data_structure_type;
 	u8 mso;
+	u8 dsc_bpp_int;
+	u8 dsc_bpp_fract;
 } __packed;
 
 /*

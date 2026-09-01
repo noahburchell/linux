@@ -203,6 +203,9 @@ unsigned long __get_wchan(struct task_struct *p)
 	struct unwind_state state;
 	unsigned long ip = 0;
 
+	if (!task_stack_page(p))
+		return 0;
+
 	if (!try_get_task_stack(p))
 		return 0;
 

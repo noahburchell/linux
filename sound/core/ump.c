@@ -1157,11 +1157,10 @@ static int snd_ump_legacy_open(struct snd_rawmidi_substream *substream)
 		return -ENODEV;
 	if (dir == SNDRV_RAWMIDI_STREAM_OUTPUT) {
 		if (!ump->legacy_out_opens) {
-			err = snd_rawmidi_kernel_open_nested(&ump->core, 0,
-							     SNDRV_RAWMIDI_LFLG_OUTPUT |
-							     SNDRV_RAWMIDI_LFLG_APPEND,
-							     &ump->legacy_out_rfile,
-							     SINGLE_DEPTH_NESTING);
+			err = snd_rawmidi_kernel_open(&ump->core, 0,
+						      SNDRV_RAWMIDI_LFLG_OUTPUT |
+						      SNDRV_RAWMIDI_LFLG_APPEND,
+						      &ump->legacy_out_rfile);
 			if (err < 0)
 				return err;
 		}
@@ -1184,8 +1183,7 @@ static int snd_ump_legacy_close(struct snd_rawmidi_substream *substream)
 		ump->legacy_substreams[dir][group] = NULL;
 	if (dir == SNDRV_RAWMIDI_STREAM_OUTPUT) {
 		if (!--ump->legacy_out_opens)
-			snd_rawmidi_kernel_release_nested(&ump->legacy_out_rfile,
-							  SINGLE_DEPTH_NESTING);
+			snd_rawmidi_kernel_release(&ump->legacy_out_rfile);
 	}
 	return 0;
 }
@@ -1367,7 +1365,6 @@ int snd_ump_attach_legacy_rawmidi(struct snd_ump_endpoint *ump,
 			      &rmidi);
 	if (err < 0) {
 		kfree(ump->out_cvts);
-		ump->out_cvts = NULL;
 		return err;
 	}
 

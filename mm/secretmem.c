@@ -202,7 +202,7 @@ static struct file *secretmem_file_create(unsigned long flags)
 	if (IS_ERR(file))
 		goto err_free_inode;
 
-	mapping_set_gfp_mask(inode->i_mapping, GFP_USER);
+	mapping_set_gfp_mask(inode->i_mapping, GFP_HIGHUSER);
 	mapping_set_unevictable(inode->i_mapping);
 
 	inode->i_op = &secretmem_iops;
@@ -245,6 +245,8 @@ static int secretmem_init_fs_context(struct fs_context *fc)
 	if (!ctx)
 		return -ENOMEM;
 
+	fc->s_iflags |= SB_I_NOEXEC;
+	fc->s_iflags |= SB_I_NODEV;
 	return 0;
 }
 

@@ -519,7 +519,9 @@ static void dmz_mblock_bio_end_io(struct bio *bio)
 	else
 		flag = DMZ_META_READING;
 
-	clear_and_wake_up_bit(flag, &mblk->state);
+	clear_bit_unlock(flag, &mblk->state);
+	smp_mb__after_atomic();
+	wake_up_bit(&mblk->state, flag);
 
 	bio_put(bio);
 }
@@ -1908,7 +1910,9 @@ void dmz_unlock_zone_reclaim(struct dm_zone *zone)
 	WARN_ON(dmz_is_active(zone));
 	WARN_ON(!dmz_in_reclaim(zone));
 
-	clear_and_wake_up_bit(DMZ_RECLAIM, &zone->flags);
+	clear_bit_unlock(DMZ_RECLAIM, &zone->flags);
+	smp_mb__after_atomic();
+	wake_up_bit(&zone->flags, DMZ_RECLAIM);
 }
 
 /*
@@ -2867,7 +2871,7 @@ int dmz_ctr_metadata(struct dmz_dev *dev, int num_dev,
 	if (!zmd)
 		return -ENOMEM;
 
-	strscpy(zmd->devname, devname);
+	strcpy(zmd->devname, devname);
 	zmd->dev = dev;
 	zmd->nr_devs = num_dev;
 	zmd->mblk_rbtree = RB_ROOT;

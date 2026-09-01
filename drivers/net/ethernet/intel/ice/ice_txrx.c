@@ -1654,7 +1654,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 			ret = ipv6_skip_exthdr(skb, exthdr - skb->data,
 					       &l4_proto, &frag_off);
 			if (ret < 0)
-				goto checksum_sw_fb;
+				return -1;
 		}
 
 		/* define outer transport */
@@ -1673,7 +1673,11 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 			l4.hdr = skb_inner_network_header(skb);
 			break;
 		default:
-			goto checksum_sw_fb;
+			if (first->tx_flags & ICE_TX_FLAGS_TSO)
+				return -1;
+
+			skb_checksum_help(skb);
+			return 0;
 		}
 
 		/* compute outer L3 header size */
@@ -1732,7 +1736,7 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 			ipv6_skip_exthdr(skb, exthdr - skb->data, &l4_proto,
 					 &frag_off);
 	} else {
-		goto checksum_sw_fb;
+		return -1;
 	}
 
 	/* compute inner L3 header size */
@@ -1785,17 +1789,15 @@ int ice_tx_csum(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 		break;
 
 	default:
-		goto checksum_sw_fb;
+		if (first->tx_flags & ICE_TX_FLAGS_TSO)
+			return -1;
+		skb_checksum_help(skb);
+		return 0;
 	}
 
 	off->td_cmd |= cmd;
 	off->td_offset |= offset;
 	return 1;
-
-checksum_sw_fb:
-	if (first->tx_flags & ICE_TX_FLAGS_TSO)
-		return -1;
-	return skb_checksum_help(skb);
 }
 
 /**
@@ -1891,7 +1893,7 @@ int ice_tso(struct ice_tx_buf *first, struct ice_tx_offload_params *off)
 					 SKB_GSO_UDP_TUNNEL_CSUM)) {
 		if (!(skb_shinfo(skb)->gso_type & SKB_GSO_PARTIAL) &&
 		    (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_TUNNEL_CSUM)) {
-			udp_set_len_short(l4.udp, 0);
+			l4.udp->len = 0;
 
 			/* determine offset of outer transport header */
 			l4_start = (u8)(l4.hdr - skb->data);

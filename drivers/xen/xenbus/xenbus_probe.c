@@ -514,7 +514,7 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 	char devname[XEN_BUS_ID_SIZE];
 	int err;
 	struct xenbus_device *xendev;
-	size_t name_len, type_len;
+	size_t stringlen;
 	char *tmpstring;
 
 	enum xenbus_state state = xenbus_read_driver_state(NULL, nodename);
@@ -525,9 +525,8 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 		return 0;
 	}
 
-	name_len = strlen(nodename);
-	type_len = strlen(type);
-	xendev = kzalloc(sizeof(*xendev) + name_len + 1 + type_len + 1, GFP_KERNEL);
+	stringlen = strlen(nodename) + 1 + strlen(type) + 1;
+	xendev = kzalloc(sizeof(*xendev) + stringlen, GFP_KERNEL);
 	if (!xendev)
 		return -ENOMEM;
 
@@ -536,11 +535,11 @@ int xenbus_probe_node(struct xen_bus_type *bus,
 	/* Copy the strings into the extra space. */
 
 	tmpstring = (char *)(xendev + 1);
-	memcpy(tmpstring, nodename, name_len);
+	strcpy(tmpstring, nodename);
 	xendev->nodename = tmpstring;
 
-	tmpstring += name_len + 1;
-	memcpy(tmpstring, type, type_len);
+	tmpstring += strlen(tmpstring) + 1;
+	strcpy(tmpstring, type);
 	xendev->devicetype = tmpstring;
 	init_completion(&xendev->down);
 
@@ -681,15 +680,13 @@ void xenbus_dev_changed(const char *node, struct xen_bus_type *bus)
 							    dev->otherend_id);
 
 		if (state == XenbusStateInitialising &&
-		    (state != dev->state ||
-		     (dev->otherend && backend != dev->otherend_id))) {
+		    (state != dev->state || backend != dev->otherend_id)) {
 			/*
 			 * State has been reset, assume the old one vanished
 			 * and new one needs to be probed.
 			 */
 			dev_warn(&dev->dev,
-				 "state reset occurred (xenstore state %u, local state %u, xenstore backend %u, local backend %u), reconnecting\n",
-				 state, dev->state, backend, dev->otherend_id);
+				 "state reset occurred, reconnecting\n");
 			dev->vanished = true;
 		}
 		if (dev->vanished) {
@@ -833,7 +830,7 @@ static void xenbus_probe(void)
  */
 static bool xs_hvm_defer_init_for_callback(void)
 {
-#ifdef CONFIG_X86
+#ifdef CONFIG_XEN_PVHVM
 	return xen_store_domain_type == XS_HVM &&
 		!xen_have_vector_callback;
 #else

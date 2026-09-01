@@ -128,6 +128,11 @@ ifeq ($(CONFIG_X86_32),y)
         include $(srctree)/arch/x86/Makefile_32.cpu
         KBUILD_CFLAGS += $(cflags-y)
 
+    ifneq ($(call clang-min-version, 160000),y)
+        # https://github.com/llvm/llvm-project/issues/53645
+        KBUILD_CFLAGS += -ffreestanding
+    endif
+
         percpu_seg := fs
 else
         BITS := 64
@@ -162,10 +167,22 @@ else
 ifdef CONFIG_X86_NATIVE_CPU
         KBUILD_CFLAGS += -march=native
         KBUILD_RUSTFLAGS += -Ctarget-cpu=native
-else
+endif
+
+ifdef CONFIG_MZEN4
+        KBUILD_CFLAGS += -march=znver4
+        KBUILD_RUSTFLAGS += -Ctarget-cpu=znver4
+endif
+
+ifdef CONFIG_GENERIC_CPU
+ifeq ($(CONFIG_X86_64_VERSION),1)
         KBUILD_CFLAGS += -march=x86-64 -mtune=generic
         KBUILD_RUSTFLAGS += -Ctarget-cpu=x86-64 -Ztune-cpu=generic
-endif
+else
+        KBUILD_CFLAGS +=-march=x86-64-v$(CONFIG_X86_64_VERSION)
+        KBUILD_RUSTFLAGS += -Ctarget-cpu=x86-64-v$(CONFIG_X86_64_VERSION)
+endif # CONFIG_X86_64_VERSION
+endif # CONFIG_GENERIC_CPU
 
         KBUILD_CFLAGS += -mno-red-zone
         KBUILD_CFLAGS += -mcmodel=kernel
@@ -275,6 +292,7 @@ archprepare: $(cpufeaturemasks.hdr)
 libs-y  += arch/x86/lib/
 
 # drivers-y are linked after core-y
+drivers-$(CONFIG_MATH_EMULATION) += arch/x86/math-emu/
 drivers-$(CONFIG_PCI)            += arch/x86/pci/
 
 # suspend and hibernation support

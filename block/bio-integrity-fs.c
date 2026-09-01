@@ -23,10 +23,10 @@ unsigned int fs_bio_integrity_alloc(struct bio *bio)
 	if (!action)
 		return 0;
 
-	iib = mempool_alloc(&fs_bio_integrity_pool, GFP_NOFS);
+	iib = mempool_alloc(&fs_bio_integrity_pool, GFP_NOIO);
 	bio_integrity_init(bio, &iib->bip, &iib->bvec, 1);
 
-	bio_integrity_alloc_buf(bio, GFP_NOFS, action & BI_ACT_ZERO);
+	bio_integrity_alloc_buf(bio, action & BI_ACT_ZERO);
 	if (action & BI_ACT_CHECK)
 		bio_integrity_setup_default(bio);
 	return action;
@@ -46,8 +46,7 @@ void fs_bio_integrity_free(struct bio *bio)
 
 void fs_bio_integrity_generate(struct bio *bio)
 {
-	if (fs_bio_integrity_alloc(bio) &&
-	    (bio_integrity(bio)->bip_flags & BIP_CHECK_FLAGS))
+	if (fs_bio_integrity_alloc(bio))
 		bio_integrity_generate(bio);
 }
 EXPORT_SYMBOL_GPL(fs_bio_integrity_generate);
@@ -60,9 +59,6 @@ int fs_bio_integrity_verify(struct bio *bio, sector_t sector, unsigned int size)
 		.bi_sector	= sector,
 		.bi_size	= size,
 	};
-
-	if (!bip || !(bip->bip_flags & BIP_CHECK_FLAGS))
-		return 0;
 
 	/*
 	 * Reinitialize bip->bip_iter.

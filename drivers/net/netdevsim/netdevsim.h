@@ -22,6 +22,7 @@
 #include <linux/list.h>
 #include <linux/netdevice.h>
 #include <linux/ptp_mock.h>
+#include <linux/u64_stats_sync.h>
 #include <net/devlink.h>
 #include <net/udp_tunnel.h>
 #include <net/xdp.h>
@@ -114,10 +115,11 @@ struct netdevsim {
 	int rq_reset_mode;
 
 	struct {
-		atomic64_t rx_packets;
-		atomic64_t rx_bytes;
-		atomic64_t tx_packets;
-		atomic64_t tx_bytes;
+		u64_stats_t rx_packets;
+		u64_stats_t rx_bytes;
+		u64_stats_t tx_packets;
+		u64_stats_t tx_bytes;
+		struct u64_stats_sync syncp;
 		struct psp_dev __rcu *dev;
 		struct dentry *rereg;
 		struct mutex rereg_lock;
@@ -154,7 +156,6 @@ struct netdevsim {
 	struct dentry *pp_dfs;
 	struct dentry *qr_dfs;
 	struct dentry *vlan_dfs;
-	struct dentry *ethtool_ddir;
 
 	struct nsim_ethtool ethtool;
 	struct netdevsim __rcu *peer;
@@ -170,7 +171,6 @@ void nsim_destroy(struct netdevsim *ns);
 bool netdev_is_nsim(struct net_device *dev);
 
 void nsim_ethtool_init(struct netdevsim *ns);
-void nsim_ethtool_fini(struct netdevsim *ns);
 
 void nsim_udp_tunnels_debugfs_create(struct nsim_dev *nsim_dev);
 int nsim_udp_tunnels_info_create(struct nsim_dev *nsim_dev,
@@ -292,6 +292,7 @@ enum nsim_dev_port_type {
 };
 
 #define NSIM_DEV_VF_PORT_INDEX_BASE 128
+#define NSIM_DEV_VF_PORT_INDEX_MAX UINT_MAX
 
 struct nsim_dev_port {
 	struct list_head list;
@@ -471,7 +472,6 @@ nsim_psp_handle_ext(struct sk_buff *skb, struct skb_ext *psp_ext) {}
 int nsim_setup_tc(struct net_device *dev, enum tc_setup_type type,
 		  void *type_data);
 
-#define NSIM_BUS_DEV_MAX_VFS 4
 struct nsim_bus_dev {
 	struct device dev;
 	struct list_head list;
@@ -480,6 +480,7 @@ struct nsim_bus_dev {
 	struct net *initial_net; /* Purpose of this is to carry net pointer
 				  * during the probe time only.
 				  */
+	unsigned int max_vfs;
 	unsigned int num_vfs;
 	bool init;
 };

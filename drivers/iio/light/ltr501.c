@@ -10,6 +10,7 @@
  */
 
 #include <linux/module.h>
+#include <linux/mod_devicetable.h>
 #include <linux/i2c.h>
 #include <linux/err.h>
 #include <linux/delay.h>
@@ -1537,8 +1538,11 @@ static int ltr501_probe(struct i2c_client *client)
 						IRQF_ONESHOT,
 						"ltr501_thresh_event",
 						indio_dev);
-		if (ret)
+		if (ret) {
+			dev_err(&client->dev, "request irq (%d) failed\n",
+				client->irq);
 			return ret;
+		}
 	} else {
 		indio_dev->info = data->chip_info->info_no_irq;
 	}
@@ -1597,10 +1601,10 @@ static const struct acpi_device_id ltr_acpi_match[] = {
 MODULE_DEVICE_TABLE(acpi, ltr_acpi_match);
 
 static const struct i2c_device_id ltr501_id[] = {
-	{ .name = "ltr501", .driver_data = ltr501 },
-	{ .name = "ltr559", .driver_data = ltr559 },
-	{ .name = "ltr301", .driver_data = ltr301 },
-	{ .name = "ltr303", .driver_data = ltr303 },
+	{ "ltr501", ltr501 },
+	{ "ltr559", ltr559 },
+	{ "ltr301", ltr301 },
+	{ "ltr303", ltr303 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ltr501_id);

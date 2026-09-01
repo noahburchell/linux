@@ -207,10 +207,10 @@ struct pch_pd_dev_save {
 };
 
 static const struct pci_device_id pch_spi_pcidev_id[] = {
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_GE_SPI),    .driver_data = 1 },
-	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7213_SPI), .driver_data = 2 },
-	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7223_SPI), .driver_data = 1 },
-	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7831_SPI), .driver_data = 1 },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_GE_SPI),    1, },
+	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7213_SPI), 2, },
+	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7223_SPI), 1, },
+	{ PCI_VDEVICE(ROHM, PCI_DEVICE_ID_ML7831_SPI), 1, },
 	{ }
 };
 
@@ -1406,6 +1406,8 @@ static void pch_spi_pd_remove(struct platform_device *plat_dev)
 	dev_dbg(&plat_dev->dev, "%s:[ch%d] irq=%d\n",
 		__func__, plat_dev->id, board_dat->pdev->irq);
 
+	spi_controller_get(data->host);
+
 	spi_unregister_controller(data->host);
 
 	/* check for any pending messages; no action is taken if the queue
@@ -1438,17 +1440,19 @@ static void pch_spi_pd_remove(struct platform_device *plat_dev)
 
 	spi_controller_put(data->host);
 }
-
-static int pch_spi_pd_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int pch_spi_pd_suspend(struct platform_device *pd_dev,
+			      pm_message_t state)
 {
 	u8 count;
-	struct pch_spi_board_data *board_dat = dev_get_platdata(dev);
-	struct pch_spi_data *data = dev_get_drvdata(dev);
+	struct pch_spi_board_data *board_dat = dev_get_platdata(&pd_dev->dev);
+	struct pch_spi_data *data = platform_get_drvdata(pd_dev);
 
-	dev_dbg(dev, "%s ENTRY\n", __func__);
+	dev_dbg(&pd_dev->dev, "%s ENTRY\n", __func__);
 
 	if (!board_dat) {
-		dev_err(dev, "%s pci_get_drvdata returned NULL\n", __func__);
+		dev_err(&pd_dev->dev,
+			"%s pci_get_drvdata returned NULL\n", __func__);
 		return -EFAULT;
 	}
 
@@ -1469,20 +1473,22 @@ static int pch_spi_pd_suspend(struct device *dev)
 		free_irq(board_dat->pdev->irq, data);
 
 		data->irq_reg_sts = false;
-		dev_dbg(dev, "%s free_irq invoked successfully.\n", __func__);
+		dev_dbg(&pd_dev->dev,
+			"%s free_irq invoked successfully.\n", __func__);
 	}
 
 	return 0;
 }
 
-static int pch_spi_pd_resume(struct device *dev)
+static int pch_spi_pd_resume(struct platform_device *pd_dev)
 {
-	struct pch_spi_board_data *board_dat = dev_get_platdata(dev);
-	struct pch_spi_data *data = dev_get_drvdata(dev);
+	struct pch_spi_board_data *board_dat = dev_get_platdata(&pd_dev->dev);
+	struct pch_spi_data *data = platform_get_drvdata(pd_dev);
 	int retval;
 
 	if (!board_dat) {
-		dev_err(dev, "%s pci_get_drvdata returned NULL\n", __func__);
+		dev_err(&pd_dev->dev,
+			"%s pci_get_drvdata returned NULL\n", __func__);
 		return -EFAULT;
 	}
 
@@ -1491,7 +1497,8 @@ static int pch_spi_pd_resume(struct device *dev)
 		retval = request_irq(board_dat->pdev->irq, pch_spi_handler,
 				     IRQF_SHARED, KBUILD_MODNAME, data);
 		if (retval < 0) {
-			dev_err(dev, "%s request_irq failed\n", __func__);
+			dev_err(&pd_dev->dev,
+				"%s request_irq failed\n", __func__);
 			return retval;
 		}
 
@@ -1502,17 +1509,19 @@ static int pch_spi_pd_resume(struct device *dev)
 	}
 	return 0;
 }
-
-static DEFINE_SIMPLE_DEV_PM_OPS(pch_spi_pd_pm_ops,
-				pch_spi_pd_suspend, pch_spi_pd_resume);
+#else
+#define pch_spi_pd_suspend NULL
+#define pch_spi_pd_resume NULL
+#endif
 
 static struct platform_driver pch_spi_pd_driver = {
 	.driver = {
 		.name = "pch-spi",
-		.pm = pm_sleep_ptr(&pch_spi_pd_pm_ops),
 	},
 	.probe = pch_spi_pd_probe,
 	.remove = pch_spi_pd_remove,
+	.suspend = pch_spi_pd_suspend,
+	.resume = pch_spi_pd_resume
 };
 
 static int pch_spi_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -1611,7 +1620,7 @@ static void pch_spi_remove(struct pci_dev *pdev)
 	kfree(pd_dev_save);
 }
 
-static int pch_spi_suspend(struct device *dev)
+static int __maybe_unused pch_spi_suspend(struct device *dev)
 {
 	struct pch_pd_dev_save *pd_dev_save = dev_get_drvdata(dev);
 
@@ -1622,7 +1631,7 @@ static int pch_spi_suspend(struct device *dev)
 	return 0;
 }
 
-static int pch_spi_resume(struct device *dev)
+static int __maybe_unused pch_spi_resume(struct device *dev)
 {
 	struct pch_pd_dev_save *pd_dev_save = dev_get_drvdata(dev);
 
@@ -1634,14 +1643,14 @@ static int pch_spi_resume(struct device *dev)
 	return 0;
 }
 
-static DEFINE_SIMPLE_DEV_PM_OPS(pch_spi_pm_ops, pch_spi_suspend, pch_spi_resume);
+static SIMPLE_DEV_PM_OPS(pch_spi_pm_ops, pch_spi_suspend, pch_spi_resume);
 
 static struct pci_driver pch_spi_pcidev_driver = {
 	.name = "pch_spi",
 	.id_table = pch_spi_pcidev_id,
 	.probe = pch_spi_probe,
 	.remove = pch_spi_remove,
-	.driver.pm = pm_sleep_ptr(&pch_spi_pm_ops),
+	.driver.pm = &pch_spi_pm_ops,
 };
 
 static int __init pch_spi_init(void)

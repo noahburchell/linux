@@ -19,6 +19,7 @@
 #include <linux/irq.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
+#include <linux/mod_devicetable.h>
 #include <linux/regmap.h>
 #include <linux/iio/iio.h>
 #include <linux/iio/buffer.h>
@@ -577,8 +578,10 @@ static int max30102_probe(struct i2c_client *client)
 					NULL, max30102_interrupt_handler,
 					IRQF_TRIGGER_FALLING | IRQF_ONESHOT,
 					"max30102_irq", indio_dev);
-	if (ret)
+	if (ret) {
+		dev_err(&client->dev, "request irq (%d) failed\n", client->irq);
 		return ret;
+	}
 
 	return iio_device_register(indio_dev);
 }
@@ -593,9 +596,9 @@ static void max30102_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id max30102_id[] = {
-	{ .name = "max30101", .driver_data = max30105 },
-	{ .name = "max30102", .driver_data = max30102 },
-	{ .name = "max30105", .driver_data = max30105 },
+	{ "max30101", max30105 },
+	{ "max30102", max30102 },
+	{ "max30105", max30105 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max30102_id);

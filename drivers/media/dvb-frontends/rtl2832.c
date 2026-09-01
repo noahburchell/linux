@@ -1125,8 +1125,8 @@ static void rtl2832_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id rtl2832_id_table[] = {
-	{ .name = "rtl2832" },
-	{ }
+	{ "rtl2832" },
+	{}
 };
 MODULE_DEVICE_TABLE(i2c, rtl2832_id_table);
 

@@ -221,7 +221,7 @@ disable_repeater:
 disable_vreg:
 	regulator_bulk_disable(M31_EUSB_NUM_VREGS, phy->vregs);
 
-	return ret;
+	return 0;
 }
 
 static int m31eusb2_phy_exit(struct phy *uphy)
@@ -285,7 +285,7 @@ static int m31eusb2_phy_probe(struct platform_device *pdev)
 
 	phy_set_drvdata(phy->phy, phy);
 
-	phy->repeater = devm_phy_optional_get(dev, NULL);
+	phy->repeater = devm_of_phy_get_by_index(dev, dev->of_node, 0);
 	if (IS_ERR(phy->repeater))
 		return dev_err_probe(dev, PTR_ERR(phy->repeater),
 				     "failed to get repeater\n");

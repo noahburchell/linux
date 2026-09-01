@@ -11,7 +11,6 @@
 #include <linux/kthread.h>
 #include <linux/kernel.h>
 
-#include "aie.h"
 #include "aie2_msg_priv.h"
 #include "aie2_pci.h"
 #include "amdxdna_error.h"
@@ -339,7 +338,7 @@ void aie2_error_async_events_free(struct amdxdna_dev_hdl *ndev)
 	destroy_workqueue(events->wq);
 	mutex_lock(&xdna->dev_lock);
 
-	amdxdna_free_msg_buffer(xdna, events->size, events->buf, events->addr);
+	aie2_free_msg_buffer(ndev, events->size, events->buf, events->addr);
 	kfree(events);
 }
 
@@ -355,7 +354,7 @@ int aie2_error_async_events_alloc(struct amdxdna_dev_hdl *ndev)
 	if (!events)
 		return -ENOMEM;
 
-	events->buf = amdxdna_alloc_msg_buffer(xdna, &total_size, &events->addr);
+	events->buf = aie2_alloc_msg_buffer(ndev, &total_size, &events->addr);
 	if (IS_ERR(events->buf)) {
 		ret = PTR_ERR(events->buf);
 		goto free_events;
@@ -395,7 +394,7 @@ int aie2_error_async_events_alloc(struct amdxdna_dev_hdl *ndev)
 free_wq:
 	destroy_workqueue(events->wq);
 free_buf:
-	amdxdna_free_msg_buffer(xdna, events->size, events->buf, events->addr);
+	aie2_free_msg_buffer(ndev, events->size, events->buf, events->addr);
 free_events:
 	kfree(events);
 	return ret;

@@ -214,7 +214,7 @@ static void metric__free(struct metric *m)
 	zfree(&m->metric_refs);
 	expr__ctx_free(m->pctx);
 	zfree(&m->modifier);
-	evlist__put(m->evlist);
+	evlist__delete(m->evlist);
 	free(m);
 }
 
@@ -295,8 +295,7 @@ static int setup_metric_events(const char *pmu, struct hashmap *ids,
 	const char *metric_id;
 	struct evsel *ev;
 	size_t ids_size, matched_events, i;
-	bool all_pmus = !strcmp(pmu, "all") || !strcmp(pmu, "default_core") ||
-			perf_pmus__num_core_pmus() == 1 || !is_pmu_core(pmu);
+	bool all_pmus = !strcmp(pmu, "all") || perf_pmus__num_core_pmus() == 1 || !is_pmu_core(pmu);
 
 	*out_metric_events = NULL;
 	ids_size = hashmap__size(ids);
@@ -416,9 +415,14 @@ static int metricgroup__sys_event_iter(const struct pmu_metric *pm,
 	if (!pm->metric_expr || !pm->compat)
 		return 0;
 
-	/* Only process with the iterator if there is a a PMU that matches the ID. */
-	pmu = perf_pmus__scan_for_uncore_id(pmu, pm->compat);
-	return pmu ? d->fn(pm, table, d->data) : 0;
+	while ((pmu = perf_pmus__scan(pmu))) {
+
+		if (!pmu->id || !pmu_uncore_identifier_match(pm->compat, pmu->id))
+			continue;
+
+		return d->fn(pm, table, d->data);
+	}
+	return 0;
 }
 
 int metricgroup__for_each_metric(const struct pmu_metrics_table *table, pmu_metric_iter_fn fn,
@@ -1262,8 +1266,7 @@ static int parse_ids(bool metric_no_merge, bool fake_pmu,
 		     struct expr_parse_ctx *ids, const char *modifier,
 		     bool group_events, const bool tool_events[TOOL_PMU__EVENT_MAX],
 		     struct evlist **out_evlist,
-		     const char *filter_pmu,
-		     bool cputype_filter)
+		     const char *filter_pmu)
 {
 	struct parse_events_error parse_error;
 	struct evlist *parsed_evlist;
@@ -1318,9 +1321,7 @@ static int parse_ids(bool metric_no_merge, bool fake_pmu,
 	pr_debug("Parsing metric events '%s'\n", events.buf);
 	parse_events_error__init(&parse_error);
 	ret = __parse_events(parsed_evlist, events.buf, filter_pmu,
-			     cputype_filter,
-			     &parse_error, fake_pmu,
-			     /*warn_if_reordered=*/false,
+			     &parse_error, fake_pmu, /*warn_if_reordered=*/false,
 			     /*fake_tp=*/false);
 	if (ret) {
 		parse_events_error__print(&parse_error, events.buf);
@@ -1334,7 +1335,7 @@ static int parse_ids(bool metric_no_merge, bool fake_pmu,
 	parsed_evlist = NULL;
 err_out:
 	parse_events_error__exit(&parse_error);
-	evlist__put(parsed_evlist);
+	evlist__delete(parsed_evlist);
 	strbuf_release(&events);
 	return ret;
 }
@@ -1385,7 +1386,7 @@ static struct evsel *pick_display_evsel(struct list_head *metric_list,
 }
 
 static int parse_groups(struct evlist *perf_evlist,
-			const char *pmu, bool cputype_filter, const char *str,
+			const char *pmu, const char *str,
 			bool metric_no_group,
 			bool metric_no_merge,
 			bool metric_no_threshold,
@@ -1423,8 +1424,7 @@ static int parse_groups(struct evlist *perf_evlist,
 					/*group_events=*/false,
 					tool_events,
 					&combined_evlist,
-					(pmu && strcmp(pmu, "all") == 0) ? NULL : pmu,
-					cputype_filter);
+					(pmu && strcmp(pmu, "all") == 0) ? NULL : pmu);
 		}
 		if (combined)
 			expr__ctx_free(combined);
@@ -1480,8 +1480,7 @@ static int parse_groups(struct evlist *perf_evlist,
 		if (!metric_evlist) {
 			ret = parse_ids(metric_no_merge, fake_pmu, m->pctx, m->modifier,
 					m->group_events, tool_events, &m->evlist,
-					(pmu && strcmp(pmu, "all") == 0) ? NULL : pmu,
-					cputype_filter);
+					(pmu && strcmp(pmu, "all") == 0) ? NULL : pmu);
 			if (ret)
 				goto out;
 
@@ -1495,7 +1494,7 @@ static int parse_groups(struct evlist *perf_evlist,
 			goto out;
 		}
 
-		me = metricgroup__lookup(evlist__metric_events(perf_evlist),
+		me = metricgroup__lookup(&perf_evlist->metric_events,
 					 pick_display_evsel(&metric_list, metric_events),
 					 /*create=*/true);
 
@@ -1546,26 +1545,22 @@ static int parse_groups(struct evlist *perf_evlist,
 
 
 	if (combined_evlist) {
-		evlist__splice_list_tail(perf_evlist, &evlist__core(combined_evlist)->entries);
-		evlist__put(combined_evlist);
-		combined_evlist = NULL;
+		evlist__splice_list_tail(perf_evlist, &combined_evlist->core.entries);
+		evlist__delete(combined_evlist);
 	}
 
 	list_for_each_entry(m, &metric_list, nd) {
 		if (m->evlist)
-			evlist__splice_list_tail(perf_evlist, &evlist__core(m->evlist)->entries);
+			evlist__splice_list_tail(perf_evlist, &m->evlist->core.entries);
 	}
 
 out:
-	if (combined_evlist)
-		evlist__put(combined_evlist);
 	metricgroup__free_metrics(&metric_list);
 	return ret;
 }
 
 int metricgroup__parse_groups(struct evlist *perf_evlist,
 			      const char *pmu,
-			      bool cputype_filter,
 			      const char *str,
 			      bool metric_no_group,
 			      bool metric_no_merge,
@@ -1579,17 +1574,16 @@ int metricgroup__parse_groups(struct evlist *perf_evlist,
 	if (hardware_aware_grouping)
 		pr_debug("Use hardware aware grouping instead of traditional metric grouping method\n");
 
-	return parse_groups(perf_evlist, pmu, cputype_filter, str, metric_no_group, metric_no_merge,
+	return parse_groups(perf_evlist, pmu, str, metric_no_group, metric_no_merge,
 			    metric_no_threshold, user_requested_cpu_list, system_wide,
 			    /*fake_pmu=*/false, table);
 }
 
 int metricgroup__parse_groups_test(struct evlist *evlist,
 				   const struct pmu_metrics_table *table,
-				   const char *str,
-				   bool cputype_filter)
+				   const char *str)
 {
-	return parse_groups(evlist, "all", cputype_filter, str,
+	return parse_groups(evlist, "all", str,
 			    /*metric_no_group=*/false,
 			    /*metric_no_merge=*/false,
 			    /*metric_no_threshold=*/false,
@@ -1693,10 +1687,8 @@ int metricgroup__copy_metric_events(struct evlist *evlist, struct cgroup *cgrp,
 			new_expr->metric_expr = old_expr->metric_expr;
 			new_expr->metric_threshold = old_expr->metric_threshold;
 			new_expr->metric_name = strdup(old_expr->metric_name);
-			if (!new_expr->metric_name) {
-				free(new_expr);
+			if (!new_expr->metric_name)
 				return -ENOMEM;
-			}
 
 			new_expr->metric_unit = old_expr->metric_unit;
 			new_expr->runtime = old_expr->runtime;
@@ -1709,7 +1701,6 @@ int metricgroup__copy_metric_events(struct evlist *evlist, struct cgroup *cgrp,
 				alloc_size = sizeof(*new_expr->metric_refs);
 				new_expr->metric_refs = calloc(nr + 1, alloc_size);
 				if (!new_expr->metric_refs) {
-					zfree(&new_expr->metric_name);
 					free(new_expr);
 					return -ENOMEM;
 				}
@@ -1726,7 +1717,6 @@ int metricgroup__copy_metric_events(struct evlist *evlist, struct cgroup *cgrp,
 			alloc_size = sizeof(*new_expr->metric_events);
 			new_expr->metric_events = calloc(nr + 1, alloc_size);
 			if (!new_expr->metric_events) {
-				zfree(&new_expr->metric_name);
 				zfree(&new_expr->metric_refs);
 				free(new_expr);
 				return -ENOMEM;
@@ -1737,7 +1727,6 @@ int metricgroup__copy_metric_events(struct evlist *evlist, struct cgroup *cgrp,
 				evsel = old_expr->metric_events[idx];
 				evsel = evlist__find_evsel(evlist, evsel->core.idx);
 				if (evsel == NULL) {
-					zfree(&new_expr->metric_name);
 					zfree(&new_expr->metric_events);
 					zfree(&new_expr->metric_refs);
 					free(new_expr);

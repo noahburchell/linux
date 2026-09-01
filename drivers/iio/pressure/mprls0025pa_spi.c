@@ -11,6 +11,7 @@
 #include <linux/array_size.h>
 #include <linux/device.h>
 #include <linux/errno.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/spi/spi.h>
 #include <linux/stddef.h>
@@ -59,7 +60,7 @@ static const struct of_device_id mpr_spi_match[] = {
 MODULE_DEVICE_TABLE(of, mpr_spi_match);
 
 static const struct spi_device_id mpr_spi_id[] = {
-	{ .name = "mprls0025pa" },
+	{ "mprls0025pa" },
 	{ }
 };
 MODULE_DEVICE_TABLE(spi, mpr_spi_id);

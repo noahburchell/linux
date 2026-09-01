@@ -63,10 +63,15 @@ bool optc2_enable_crtc(struct timing_generator *optc)
 	REG_UPDATE(CONTROL,
 			VTG0_ENABLE, 1);
 
+	REG_SEQ_START();
+
 	/* Enable CRTC */
 	REG_UPDATE_2(OTG_CONTROL,
 			OTG_DISABLE_POINT_CNTL, 3,
 			OTG_MASTER_EN, 1);
+
+	REG_SEQ_SUBMIT();
+	REG_SEQ_WAIT_DONE();
 
 	return true;
 }
@@ -300,8 +305,8 @@ static void optc2_align_vblanks(
 	L = div_u64(L, master_h_total);
 	L = div_u64(L, slave_pixel_clock_100Hz);
 	XY = div_u64(L, p);
-	Y = (uint32_t)(master_v_active - XY - 1);
-	X = (uint32_t)div_u64(((XY + 1) * p - L) * master_h_total, p * master_clock_divider);
+	Y = master_v_active - XY - 1;
+	X = div_u64(((XY + 1) * p - L) * master_h_total, p * master_clock_divider);
 
 	/*
 	 * set master OTG to unlock when V/H

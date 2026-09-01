@@ -143,6 +143,7 @@ void vga_set_default_device(struct pci_dev *pdev)
 	pci_dev_put(vga_default);
 	vga_default = pci_dev_get(pdev);
 }
+EXPORT_SYMBOL_GPL(vga_set_default_device);
 
 /**
  * vga_remove_vgacon - deactivate VGA console
@@ -575,7 +576,9 @@ static bool vga_is_firmware_default(struct pci_dev *pdev)
 static bool vga_arb_integrated_gpu(struct device *dev)
 {
 #if defined(CONFIG_ACPI)
-	return acpi_dev_is_video_device(ACPI_COMPANION(dev));
+	struct acpi_device *adev = ACPI_COMPANION(dev);
+
+	return adev && !strcmp(acpi_device_hid(adev), ACPI_VIDEO_HID);
 #else
 	return false;
 #endif

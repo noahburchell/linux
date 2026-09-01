@@ -9,7 +9,6 @@
 #include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/workqueue.h>
-#include <linux/platform_device.h>
 #include <linux/power_supply.h>
 #include <linux/olpc-ec.h>
 
@@ -18,6 +17,8 @@
 
 #define DRV_NAME			"olpc-xo15-sci"
 #define PFX				DRV_NAME ": "
+#define XO15_SCI_CLASS			DRV_NAME
+#define XO15_SCI_DEVICE_NAME		"OLPC XO-1.5 SCI"
 
 static unsigned long			xo15_sci_gpe;
 static bool				lid_wake_on_close;
@@ -135,16 +136,17 @@ static u32 xo15_sci_gpe_handler(acpi_handle gpe_device, u32 gpe, void *context)
 	return ACPI_INTERRUPT_HANDLED | ACPI_REENABLE_GPE;
 }
 
-static int xo15_sci_probe(struct platform_device *pdev)
+static int xo15_sci_add(struct acpi_device *device)
 {
-	struct acpi_device *device;
 	unsigned long long tmp;
 	acpi_status status;
 	int r;
 
-	device = ACPI_COMPANION(&pdev->dev);
 	if (!device)
-		return -ENODEV;
+		return -EINVAL;
+
+	strscpy(acpi_device_name(device), XO15_SCI_DEVICE_NAME);
+	strscpy(acpi_device_class(device), XO15_SCI_CLASS);
 
 	/* Get GPE bit assignment (EC events). */
 	status = acpi_evaluate_integer(device->handle, "_GPE", NULL, &tmp);
@@ -158,7 +160,7 @@ static int xo15_sci_probe(struct platform_device *pdev)
 	if (ACPI_FAILURE(status))
 		return -ENODEV;
 
-	dev_info(&pdev->dev, "Initialized, GPE = 0x%lx\n", xo15_sci_gpe);
+	dev_info(&device->dev, "Initialized, GPE = 0x%lx\n", xo15_sci_gpe);
 
 	r = sysfs_create_file(&device->dev.kobj, &lid_wake_on_close_attr.attr);
 	if (r)
@@ -172,7 +174,7 @@ static int xo15_sci_probe(struct platform_device *pdev)
 
 	/* Enable wake-on-EC */
 	if (device->wakeup.flags.valid)
-		device_init_wakeup(&pdev->dev, true);
+		device_init_wakeup(&device->dev, true);
 
 	return 0;
 
@@ -182,11 +184,9 @@ err_sysfs:
 	return r;
 }
 
-static void xo15_sci_remove(struct platform_device *pdev)
+static void xo15_sci_remove(struct acpi_device *device)
 {
-	struct acpi_device *device = ACPI_COMPANION(&pdev->dev);
-
-	device_init_wakeup(&pdev->dev, false);
+	device_init_wakeup(&device->dev, false);
 	acpi_disable_gpe(NULL, xo15_sci_gpe);
 	acpi_remove_gpe_handler(NULL, xo15_sci_gpe, xo15_sci_gpe_handler);
 	cancel_work_sync(&sci_work);
@@ -214,18 +214,19 @@ static const struct acpi_device_id xo15_sci_device_ids[] = {
 	{"", 0},
 };
 
-static struct platform_driver xo15_sci_drv = {
-	.probe = xo15_sci_probe,
-	.remove = xo15_sci_remove,
-	.driver = {
-		.name = DRV_NAME,
-		.acpi_match_table = xo15_sci_device_ids,
-		.pm = &xo15_sci_pm,
+static struct acpi_driver xo15_sci_drv = {
+	.name = DRV_NAME,
+	.class = XO15_SCI_CLASS,
+	.ids = xo15_sci_device_ids,
+	.ops = {
+		.add = xo15_sci_add,
+		.remove = xo15_sci_remove,
 	},
+	.drv.pm = &xo15_sci_pm,
 };
 
 static int __init xo15_sci_init(void)
 {
-	return platform_driver_register(&xo15_sci_drv);
+	return acpi_bus_register_driver(&xo15_sci_drv);
 }
 device_initcall(xo15_sci_init);

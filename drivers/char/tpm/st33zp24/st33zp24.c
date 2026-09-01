@@ -93,9 +93,7 @@ static u8 st33zp24_status(struct tpm_chip *chip)
 	struct st33zp24_dev *tpm_dev = dev_get_drvdata(&chip->dev);
 	u8 data;
 
-	if (tpm_dev->ops->recv(tpm_dev->phy_id, TPM_STS, &data, 1) != 1)
-		return 0;
-
+	tpm_dev->ops->recv(tpm_dev->phy_id, TPM_STS, &data, 1);
 	return data;
 }
 
@@ -106,10 +104,10 @@ static bool check_locality(struct tpm_chip *chip)
 {
 	struct st33zp24_dev *tpm_dev = dev_get_drvdata(&chip->dev);
 	u8 data;
-	int status;
+	u8 status;
 
 	status = tpm_dev->ops->recv(tpm_dev->phy_id, TPM_ACCESS, &data, 1);
-	if (status == 1 && (data &
+	if (status && (data &
 		(TPM_ACCESS_ACTIVE_LOCALITY | TPM_ACCESS_VALID)) ==
 		(TPM_ACCESS_ACTIVE_LOCALITY | TPM_ACCESS_VALID))
 		return true;
@@ -508,8 +506,11 @@ int st33zp24_probe(void *phy_id, const struct st33zp24_phy_ops *ops,
 		ret = devm_request_irq(dev, irq, tpm_ioserirq_handler,
 				IRQF_TRIGGER_HIGH, "TPM SERIRQ management",
 				chip);
-		if (ret < 0)
+		if (ret < 0) {
+			dev_err(&chip->dev, "TPM SERIRQ signals %d not available\n",
+				irq);
 			goto _tpm_clean_answer;
+		}
 
 		intmask |= TPM_INTF_CMD_READY_INT
 			|  TPM_INTF_STS_VALID_INT

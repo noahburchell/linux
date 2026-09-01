@@ -66,6 +66,11 @@ struct arch_timer_context {
 	 */
 	bool				loaded;
 
+	/* Output level of the timer IRQ */
+	struct {
+		bool			level;
+	} irq;
+
 	/* Who am I? */
 	enum kvm_arch_timers		timer_id;
 
@@ -99,7 +104,7 @@ void kvm_timer_vcpu_init(struct kvm_vcpu *vcpu);
 void kvm_timer_sync_nested(struct kvm_vcpu *vcpu);
 void kvm_timer_sync_user(struct kvm_vcpu *vcpu);
 bool kvm_timer_should_notify_user(struct kvm_vcpu *vcpu);
-bool kvm_timer_update_run(struct kvm_vcpu *vcpu);
+void kvm_timer_update_run(struct kvm_vcpu *vcpu);
 void kvm_timer_vcpu_terminate(struct kvm_vcpu *vcpu);
 
 void kvm_timer_init_vm(struct kvm *kvm);
@@ -162,28 +167,20 @@ static inline bool has_cntpoff(void)
 	return (has_vhe() && cpus_have_final_cap(ARM64_HAS_ECV_CNTPOFF));
 }
 
-#ifdef __KVM_NVHE_HYPERVISOR__
-#define KERN_HYP_VA(x)		kern_hyp_va(x)
-#else
-#define KERN_HYP_VA(x)		x
-#endif
+static inline u64 timer_get_offset(struct arch_timer_context *ctxt)
+{
+	u64 offset = 0;
 
-#define timer_get_offset(ctxt)						\
-	({								\
-		struct arch_timer_context *__ctxt = (ctxt);		\
-		u64 off = 0;						\
-									\
-		if (__ctxt) {						\
-			struct arch_timer_offset *ato = &__ctxt->offset;\
-									\
-			if (ato->vm_offset)				\
-				off += *KERN_HYP_VA(ato->vm_offset);	\
-			if (ato->vcpu_offset)				\
-				off += *KERN_HYP_VA(ato->vcpu_offset);	\
-		}							\
-									\
-		off;							\
-	})
+	if (!ctxt)
+		return 0;
+
+	if (ctxt->offset.vm_offset)
+		offset += *ctxt->offset.vm_offset;
+	if (ctxt->offset.vcpu_offset)
+		offset += *ctxt->offset.vcpu_offset;
+
+	return offset;
+}
 
 static inline void timer_set_offset(struct arch_timer_context *ctxt, u64 offset)
 {

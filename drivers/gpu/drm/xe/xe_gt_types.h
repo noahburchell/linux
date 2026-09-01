@@ -136,7 +136,7 @@ struct xe_gt {
 		/** @info.gmdid: raw GMD_ID value from hardware */
 		u32 gmdid;
 		/**
-		 * @info.multi_queue_engine_class_mask: Bitmask of engine classes with
+		 * @multi_queue_engine_class_mask: Bitmask of engine classes with
 		 * multi queue support enabled.
 		 */
 		u16 multi_queue_engine_class_mask;
@@ -144,11 +144,6 @@ struct xe_gt {
 		u8 id;
 		/** @info.has_indirect_ring_state: GT has indirect ring state support */
 		u8 has_indirect_ring_state:1;
-		/**
-		 * @info.has_uncorrectable_error_reporting: GT has uncorrectable
-		 * error reporting support
-		 */
-		u8 has_uncorrectable_error_reporting:1;
 		/**
 		 * @info.has_xe2_blt_instructions: GT supports Xe2-style MEM_SET
 		 * and MEM_COPY blitter functionality.  Note that despite the
@@ -235,16 +230,10 @@ struct xe_gt {
 		 */
 		struct xe_sa_manager *bb_pool;
 		/**
-		 * @usm.paging_hwe0: The first designated paging engine.
-		 * This is some reserved BCS instance used for USM operations
-		 * (e.g. migrations, fixing page tables)
+		 * @usm.reserved_bcs_instance: reserved BCS instance used for USM
+		 * operations (e.g. migrations, fixing page tables)
 		 */
-		struct xe_hw_engine *paging_hwe0;
-		/**
-		 * @usm.paging_logical_mask: logical mask of paging engines.
-		 * Should be densely populated.
-		 */
-		u32 paging_logical_mask;
+		u16 reserved_bcs_instance;
 	} usm;
 
 	/** @ordered_wq: used to serialize GT resets and TDRs */
@@ -373,7 +362,7 @@ struct xe_gt {
 	/** @user_engines: engines present in GT and available to userspace */
 	struct {
 		/**
-		 * @user_engines.mask: like @info.engine_mask, but take in
+		 * @user_engines.mask: like @info->engine_mask, but take in
 		 * consideration only engines available to userspace
 		 */
 		u64 mask;

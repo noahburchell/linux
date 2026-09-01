@@ -945,8 +945,6 @@ int main(int argc, char *argv[])
 		},
 	};
 
-	ksft_print_header();
-
 	err = mte_default_setup();
 	if (err)
 		return err;

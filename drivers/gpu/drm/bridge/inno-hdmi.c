@@ -13,6 +13,7 @@
 #include <linux/i2c.h>
 #include <linux/hdmi.h>
 #include <linux/mfd/syscon.h>
+#include <linux/mod_devicetable.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
@@ -29,6 +30,8 @@
 
 #include <drm/display/drm_hdmi_helper.h>
 #include <drm/display/drm_hdmi_state_helper.h>
+
+#define INNO_HDMI_MIN_TMDS_CLOCK  25000000U
 
 #define DDC_SEGMENT_ADDR		0x30
 
@@ -753,7 +756,7 @@ static int inno_hdmi_config_video_timing(struct inno_hdmi *hdmi,
 	return 0;
 }
 
-static int inno_hdmi_setup(struct inno_hdmi *hdmi, struct drm_atomic_commit *state)
+static int inno_hdmi_setup(struct inno_hdmi *hdmi, struct drm_atomic_state *state)
 {
 	struct drm_bridge *bridge = &hdmi->bridge;
 	struct drm_connector *connector;
@@ -817,7 +820,7 @@ static enum drm_mode_status inno_hdmi_bridge_mode_valid(struct drm_bridge *bridg
 
 	mpixelclk = mode->clock * 1000;
 
-	if (mpixelclk < HDMI_TMDS_CHAR_RATE_MIN_HZ)
+	if (mpixelclk < INNO_HDMI_MIN_TMDS_CLOCK)
 		return MODE_CLOCK_LOW;
 
 	if (inno_hdmi_find_phy_config(hdmi, mpixelclk) < 0)
@@ -860,7 +863,7 @@ inno_hdmi_bridge_edid_read(struct drm_bridge *bridge, struct drm_connector *conn
 }
 
 static void inno_hdmi_bridge_atomic_enable(struct drm_bridge *bridge,
-					   struct drm_atomic_commit *state)
+					   struct drm_atomic_state *state)
 {
 	struct inno_hdmi *hdmi = bridge_to_inno_hdmi(bridge);
 
@@ -868,7 +871,7 @@ static void inno_hdmi_bridge_atomic_enable(struct drm_bridge *bridge,
 }
 
 static void inno_hdmi_bridge_atomic_disable(struct drm_bridge *bridge,
-					    struct drm_atomic_commit *state)
+					    struct drm_atomic_state *state)
 {
 	struct inno_hdmi *hdmi = bridge_to_inno_hdmi(bridge);
 
@@ -878,7 +881,7 @@ static void inno_hdmi_bridge_atomic_disable(struct drm_bridge *bridge,
 static const struct drm_bridge_funcs inno_hdmi_bridge_funcs = {
 	.atomic_duplicate_state = drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state = drm_atomic_helper_bridge_destroy_state,
-	.atomic_create_state = drm_atomic_helper_bridge_create_state,
+	.atomic_reset = drm_atomic_helper_bridge_reset,
 	.atomic_enable = inno_hdmi_bridge_atomic_enable,
 	.atomic_disable = inno_hdmi_bridge_atomic_disable,
 	.detect = inno_hdmi_bridge_detect,
