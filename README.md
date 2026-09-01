@@ -42,4 +42,4 @@ sudo make LLVM=1 install
 
 
 if you install it and something doesnt work, feel free to shoot me an email at lychee@nburch.org and i may get back to you.
-keep in mind the extent of the "fix" will be me letting you know what has to change in the config. do NOT submit an issue
+keep in mind the extent of the "fix" will be me letting you know what has to change in the config. do NOT submit an issue asking me to add support for your hardware.
