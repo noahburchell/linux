@@ -16,6 +16,7 @@ to be blunt, this is built for *my* machine, on purpose. i haven't made any effo
 - 1000 Hz tick
 - built with clang, LTO
 - a .config with everything i don't use ripped out
+- no initramfs (fs and storage drivers as =y)
 
 ### what it assumes you have
 
