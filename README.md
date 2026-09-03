@@ -2,7 +2,7 @@
 
 ## 7.1.6
 
-this isn't really anything special, it descended from the CachyOS kernel and has only minor changes.
+this isn't really anything special, it descended from the CachyOS kernel and has only minor (and very stupid) changes.
 is this for you? it very well could be. the biggest change here is the .config, i have spent a while
 stripping everything i can. this also has the side effect of a kernel that may not have a feature you
 need, or may just not work at all.
