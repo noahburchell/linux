@@ -2,14 +2,14 @@
 
 ## 7.1.6
 
-this isn't really anything special, it descended from the CachyOS kernel and has only minor (and very stupid) changes.
+this isn't really anything special, it is pretty much the CachyOS kernel and has only minor (and very stupid) changes.
 is this for you? it very well could be. the biggest change here is the .config, i have spent a while
 stripping everything i can. this also has the side effect of a kernel that may not have a feature you
 need, or may just not work at all.
 
-to be blunt, this is built for *my* machine, on purpose. i haven't made any effort to keep it general.
+this is built for *my* machine, on purpose. i haven't made any effort to keep it general.
 
-### what's actually different
+### what's actually different (from standard, this is mostly cachy)
 
 - BORE patches
 - lazy preemption
@@ -17,7 +17,8 @@ to be blunt, this is built for *my* machine, on purpose. i haven't made any effo
 - built with clang, LTO
 - a .config with everything i don't use ripped out
 - no initramfs (fs and storage drivers as =y)
-
+- cool qr code kernel panic
+  
 ### what it assumes you have
 
 - NVMe storage
