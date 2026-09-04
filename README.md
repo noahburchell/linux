@@ -1,4 +1,4 @@
-# lychee kernel
+# lychee kernel config
 
 ## 7.1.6
 
